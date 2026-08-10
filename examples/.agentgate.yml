@@ -1,0 +1,23 @@
+version: 1
+failOn: high
+
+allowedPaths:
+  - "src/**"
+  - "tests/**"
+
+deniedPaths:
+  - ".github/workflows/**"
+
+limits:
+  changedFiles: 20
+  addedLines: 500
+  deletedLines: 300
+
+rules:
+  secret-added: error
+  test-disabled: error
+  placeholder-added: warning
+  dependency-added: warning
+  sensitive-file-changed: warning
+  scope-violation: error
+  large-change: warning
