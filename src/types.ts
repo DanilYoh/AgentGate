@@ -1,0 +1,90 @@
+export const severityOrder = [
+  "info",
+  "low",
+  "medium",
+  "high",
+  "critical",
+] as const;
+
+export type Severity = (typeof severityOrder)[number];
+export type RuleId =
+  | "secret-added"
+  | "test-disabled"
+  | "placeholder-added"
+  | "dependency-added"
+  | "sensitive-file-changed"
+  | "scope-violation"
+  | "large-change";
+
+export interface ChangedLine {
+  content: string;
+  hunk?: number;
+  oldLine?: number;
+  newLine?: number;
+  kind: "add" | "delete" | "context";
+}
+
+export interface FileDiff {
+  path: string;
+  oldPath?: string;
+  newPath?: string;
+  isNew: boolean;
+  isDeleted: boolean;
+  isBinary: boolean;
+  lines: ChangedLine[];
+  additions: ChangedLine[];
+  deletions: ChangedLine[];
+}
+
+export interface DiffSet {
+  files: FileDiff[];
+  changedFiles: number;
+  addedLines: number;
+  deletedLines: number;
+}
+
+export interface Finding {
+  ruleId: RuleId;
+  severity: Severity;
+  file: string;
+  line?: number;
+  message: string;
+  evidence: string;
+  recommendation: string;
+}
+
+export type RuleLevel = Severity | "off";
+
+export interface AgentGateConfig {
+  version: 1;
+  failOn: Severity;
+  allowedPaths: string[];
+  deniedPaths: string[];
+  limits: {
+    changedFiles: number;
+    addedLines: number;
+    deletedLines: number;
+  };
+  rules: Record<RuleId, RuleLevel>;
+}
+
+export interface RuleContext {
+  diff: DiffSet;
+  config: AgentGateConfig;
+}
+
+export interface Rule {
+  id: RuleId;
+  check(context: RuleContext): Finding[];
+}
+
+export interface ScanResult {
+  findings: Finding[];
+  blockingFindings: number;
+  summary: {
+    changedFiles: number;
+    addedLines: number;
+    deletedLines: number;
+    findings: number;
+  };
+}
