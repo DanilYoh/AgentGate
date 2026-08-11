@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { defaultConfig } from "./config/defaults.js";
@@ -186,7 +186,20 @@ export async function runCli(
   }
 }
 
-const entryUrl = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
-if (import.meta.url === entryUrl) {
+async function isEntryPoint(): Promise<boolean> {
+  const entryPath = process.argv[1];
+  if (!entryPath) return false;
+  try {
+    const [modulePath, executablePath] = await Promise.all([
+      realpath(fileURLToPath(import.meta.url)),
+      realpath(entryPath),
+    ]);
+    return modulePath === executablePath;
+  } catch {
+    return import.meta.url === pathToFileURL(entryPath).href;
+  }
+}
+
+if (await isEntryPoint()) {
   process.exitCode = await runCli(process.argv.slice(2));
 }
