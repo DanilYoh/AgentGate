@@ -454,7 +454,7 @@ describe("Git and CLI integration", () => {
       const cwd = await repository();
       execFileSync("mkfifo", [join(cwd, "input.pipe")]);
       await expect(new GitClient(cwd).getDiff({})).rejects.toThrow(
-        "non-regular untracked file",
+        "non-regular repository path",
       );
     },
   );

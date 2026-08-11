@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { lstat, open, readlink } from "node:fs/promises";
-import { resolve } from "node:path";
+import { lstat, open, opendir, readlink } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { AgentGateError } from "../errors.js";
 
@@ -248,6 +248,53 @@ export class GitClient {
     return this.run(["show", object], undefined, [], maximumPolicyBytes + 1);
   }
 
+  private async assertNoSpecialFiles(root: string): Promise<void> {
+    const ignoredOutput = await this.run(
+      [
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "-z",
+      ],
+      root,
+    );
+    const ignoredDirectories = new Set(
+      ignoredOutput
+        .split("\0")
+        .filter((path) => path.endsWith("/"))
+        .map((path) => path.slice(0, -1)),
+    );
+
+    const visit = async (directory: string, prefix: string): Promise<void> => {
+      const entries = await opendir(directory);
+      for await (const entry of entries) {
+        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (relativePath === ".git") continue;
+        if (entry.isDirectory()) {
+          if (!ignoredDirectories.has(relativePath)) {
+            await visit(join(directory, entry.name), relativePath);
+          }
+          continue;
+        }
+        if (entry.isFile() || entry.isSymbolicLink()) continue;
+        const ignored = await this.run(
+          ["check-ignore", "--", relativePath],
+          root,
+          [1],
+        );
+        if (!ignored) {
+          throw new AgentGateError(
+            `Refusing to inspect non-regular repository path ${relativePath}.`,
+          );
+        }
+      }
+    };
+
+    await visit(root, "");
+  }
+
   private async includeUntracked(
     patch: string,
     root: string,
@@ -308,6 +355,7 @@ export class GitClient {
     ];
 
     if (options.staged) return this.run([...common, "--cached", "--"], root);
+    await this.assertNoSpecialFiles(root);
     if (options.base) {
       const mergeBase = await this.getMergeBase(options.base);
       const patch = await this.run([...common, mergeBase, "--"], root);

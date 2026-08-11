@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
+import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { defaultConfig } from "./config/defaults.js";
 import { loadConfig, parseConfig } from "./config/load.js";
@@ -85,8 +86,19 @@ function parseArgs(args: string[]): CliOptions | "help" | "version" {
   return options;
 }
 
-function isInside(root: string, path: string): boolean {
-  const local = relative(root, path);
+async function isInside(root: string, path: string): Promise<boolean> {
+  let canonicalRoot: string;
+  let canonicalPath: string;
+  try {
+    [canonicalRoot, canonicalPath] = await Promise.all([
+      realpath(root),
+      realpath(path),
+    ]);
+  } catch {
+    canonicalRoot = resolve(root);
+    canonicalPath = resolve(path);
+  }
+  const local = relative(canonicalRoot, canonicalPath);
   return (
     local === "" ||
     (local !== ".." && !local.startsWith(`..${sep}`) && !isAbsolute(local))
@@ -111,7 +123,7 @@ async function loadTrustedConfig(
     const path = isAbsolute(options.configPath)
       ? options.configPath
       : resolve(cwd, options.configPath);
-    if (isInside(root, path) && !options.configSha256) {
+    if ((await isInside(root, path)) && !options.configSha256) {
       throw new AgentGateError(
         "A policy inside the checked repository is mutable. Pass its expected --config-sha256, use an external protected --config, or use --policy-ref.",
       );
