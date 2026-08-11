@@ -12,11 +12,12 @@ reviewer.
 
 ## Quick start
 
-AgentGate requires Node.js 20 or newer and Git. Once the package is installed in
-a repository, run:
+AgentGate requires Node.js 20 or newer and Git. Install the controlled scoped
+package in the repository, then run its local binary without network fallback:
 
 ```console
-npx agentgate check
+npm install --save-dev @danilyoh/agentgate
+npm exec --offline -- agentgate check
 ```
 
 To try this source checkout without publishing anything:
@@ -26,8 +27,8 @@ npm install
 npm run build
 npm pack
 # In a separate Git repository:
-npm install --save-dev /path/to/agentgate-0.1.0.tgz
-npx agentgate check
+npm install --save-dev /path/to/danilyoh-agentgate-0.1.0.tgz
+npm exec --offline -- agentgate check
 ```
 
 A clean result exits with 0:
@@ -76,7 +77,9 @@ agentgate check --base main
 agentgate check --format text
 agentgate check --format json
 agentgate check --format sarif
-agentgate check --config .agentgate.yml
+agentgate check --policy-ref origin/main
+agentgate check --config /protected/agentgate.yml
+agentgate check --config /protected/agentgate.yml --config-sha256 <sha256>
 ```
 
 - The default mode checks staged and unstaged tracked changes against `HEAD`,
@@ -85,6 +88,8 @@ agentgate check --config .agentgate.yml
 - `--base <ref>` checks changes from the merge base of the ref and `HEAD`, plus
   current tracked and untracked working-tree changes.
 - `--staged` and `--base` are mutually exclusive.
+- `--policy-ref <ref>` loads `.agentgate.yml` from an explicitly trusted Git
+  commit instead of the branch working tree.
 
 Exit codes are stable: 0 means no finding at or above `failOn`; 1 means at least
 one blocking finding; 2 means invalid arguments/configuration or a tool/Git
@@ -92,9 +97,16 @@ error.
 
 ## Configuration
 
-AgentGate automatically reads `.agentgate.yml` from the repository root, even
-when invoked from a subdirectory. A path passed with `--config` stays relative
-to the invocation directory. Start from
+AgentGate never trusts the working-tree copy of `.agentgate.yml`. By default it
+loads the file from `HEAD`, or from the merge base in `--base` mode. A change to
+the policy file in a Git-backed policy mode fails closed with exit code 2. For
+CI, prefer `--policy-ref origin/main`. For higher assurance, pass an
+operator-controlled external `--config`; a config inside the checked repository
+requires `--config-sha256`.
+
+These guarantees assume the CLI binary, invocation arguments, and selected
+policy source are controlled by the operator. See the complete
+[threat model](docs/threat-model.md). Start from
 [`examples/.agentgate.yml`](examples/.agentgate.yml):
 
 ```yaml
@@ -112,24 +124,47 @@ limits:
   addedLines: 500
   deletedLines: 300
 
+untracked:
+  maxFileBytes: 1048576
+  maxTotalBytes: 8388608
+  readTimeoutMs: 2000
+
 rules:
-  secret-added: error
+  secret-added:
+    level: error
+    excludePaths:
+      - "tests/fixtures/**"
   test-disabled: error
   placeholder-added: warning
   dependency-added: warning
   sensitive-file-changed: warning
   scope-violation: error
   large-change: warning
+
+suppressions:
+  - ruleId: placeholder-added
+    path: "src/generated.ts"
+    line: 12
+    reason: "Generated compatibility stub"
 ```
 
 Rule values may be `off`, `info`, `low`, `medium`, `high`, or `critical`. For
 concise policy files, `warning` maps to `medium` and `error` maps to `high`.
 `failOn` uses the five finding severities and blocks that level and above. An
 empty `allowedPaths` permits every path; `deniedPaths` always takes precedence.
+Each rule also accepts `{ level, excludePaths }`. Suppressions require a rule,
+path, reason, and optional exact line; suppressed findings are counted
+separately in reports.
 
 Configuration is validated before reporting. Unknown keys, invalid path-list
 types, negative limits, unsupported versions, and unknown rules return exit code
 2 with the failing configuration path.
+
+Untracked paths are inspected with `lstat` before opening. Symlinks are scanned
+as link text; FIFOs, devices, sockets, unreadable files, files over
+`untracked.maxFileBytes`, aggregate content over `untracked.maxTotalBytes`, and
+reads exceeding `untracked.readTimeoutMs` fail closed with exit code 2. File
+content is read through a bounded buffer.
 
 ## Reports and secret safety
 
@@ -137,15 +172,42 @@ Text is intended for local terminals. JSON provides stable structured fields for
 scripts. SARIF 2.1.0 can be consumed by compatible code-scanning systems:
 
 ```console
-npx agentgate check --format json > agentgate.json
-npx agentgate check --format sarif > agentgate.sarif
+npm exec --offline -- agentgate check --format json > agentgate.json
+npm exec --offline -- agentgate check --format sarif > agentgate.sarif
 ```
 
 Every finding includes a rule ID, severity, file, optional line, explanation,
-short evidence, and remediation. Secret values are redacted when the finding is
-created and again when each report is serialized. Avoid sharing raw diffs: a
-scanner can reduce exposure in its own output but cannot remove a committed
-secret from Git history.
+short evidence, and remediation. Every string field is redacted before JSON or
+SARIF serialization, so redaction cannot corrupt the serialized document. Avoid
+sharing raw diffs: a scanner can reduce exposure in its own output but cannot
+remove a committed secret from Git history.
+
+## Hooks and CI
+
+With Husky, put this in `.husky/pre-commit`:
+
+```sh
+npm exec --offline -- agentgate check --staged
+```
+
+Lefthook uses the same command under `pre-commit.commands.agentgate.run`. A
+framework-agnostic `pre-commit` entry can use `language: system`,
+`pass_filenames: false`, and that command as `entry`.
+
+In CI, fetch full history and select policy from the protected base branch:
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+- run: npm ci
+- run:
+    npm exec --offline -- agentgate check --base origin/main --policy-ref
+    origin/main
+```
+
+Protect changes to the package lock, hook, workflow, and policy through normal
+code ownership and branch protection.
 
 Git is invoked directly without a shell. External diff and text-conversion
 drivers, pagers, and filesystem monitors are disabled for the scan;
@@ -174,6 +236,7 @@ npm run typecheck
 npm test
 npm run build
 npm run test:package
+npm run dogfood -- origin/main
 ```
 
 `test:package` runs `npm pack`, installs the tarball into a temporary Git

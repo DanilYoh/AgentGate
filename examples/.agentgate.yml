@@ -13,11 +13,25 @@ limits:
   addedLines: 500
   deletedLines: 300
 
+untracked:
+  maxFileBytes: 1048576
+  maxTotalBytes: 8388608
+  readTimeoutMs: 2000
+
 rules:
-  secret-added: error
+  secret-added:
+    level: error
+    excludePaths:
+      - "tests/fixtures/**"
   test-disabled: error
   placeholder-added: warning
   dependency-added: warning
   sensitive-file-changed: warning
   scope-violation: error
   large-change: warning
+
+suppressions:
+  - ruleId: placeholder-added
+    path: "src/generated.ts"
+    line: 12
+    reason: "Generated compatibility stub"

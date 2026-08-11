@@ -21,6 +21,7 @@ npm run typecheck
 npm test
 npm run build
 npm run test:package
+npm run dogfood -- origin/main
 ```
 
 New rules implement the `Rule` interface in `src/types.ts`, inspect the parsed

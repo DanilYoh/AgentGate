@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented here.
 
+## Unreleased
+
+### Security
+
+- Load automatic policy from a trusted Git snapshot, support protected policy
+  refs and SHA-256-pinned external policy, and fail closed on mutable policy.
+- Bound and time-limit untracked-file reads and reject special files.
+- Redact individual JSON and SARIF fields before serialization.
+
+### Changed
+
+- Rename the npm package to `@danilyoh/agentgate` while retaining the
+  `agentgate` binary.
+- Add rule-level path exclusions, audited suppressions, and self-dogfooding.
+- Normalize repository text to LF across operating systems and make the package
+  smoke test execute the installed CLI deterministically.
+
 ## 0.1.0 - 2026-08-10
 
 ### Added
