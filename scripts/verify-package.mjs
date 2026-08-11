@@ -67,19 +67,17 @@ try {
     `export const token = "${secret}";\n`,
     "utf8",
   );
-  const cli = join(repository, "node_modules", "agentgate", "dist", "cli.js");
+  const cli = join(
+    repository,
+    "node_modules",
+    "@danilyoh",
+    "agentgate",
+    "dist",
+    "cli.js",
+  );
   const result = spawnSync(
     process.execPath,
-    [
-      npmCli,
-      "exec",
-      "--offline",
-      "--",
-      "agentgate",
-      "check",
-      "--format",
-      "json",
-    ],
+    [cli, "check", "--format", "json"],
     {
       cwd: repository,
       encoding: "utf8",

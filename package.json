@@ -1,5 +1,5 @@
 {
-  "name": "agentgate",
+  "name": "@danilyoh/agentgate",
   "version": "0.1.0",
   "description": "A deterministic local pre-commit firewall for coding-agent changes.",
   "type": "module",
@@ -24,6 +24,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:package": "node scripts/verify-package.mjs",
+    "dogfood": "node scripts/dogfood.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "format": "prettier --check .",
@@ -38,6 +39,9 @@
     "coding-agents"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "yaml": "^2.9.0"
   },
