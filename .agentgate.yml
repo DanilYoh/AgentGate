@@ -1,0 +1,40 @@
+version: 1
+failOn: high
+
+limits:
+  changedFiles: 100
+  addedLines: 10000
+  deletedLines: 5000
+
+untracked:
+  maxFileBytes: 1048576
+  maxTotalBytes: 8388608
+  readTimeoutMs: 2000
+
+rules:
+  secret-added:
+    level: error
+    excludePaths:
+      - "tests/fixtures.ts"
+      - "tests/secret-added.test.ts"
+      - "tests/reporters.test.ts"
+      - "tests/diff-parser.test.ts"
+      - "scripts/verify-package.mjs"
+      - "docs/demo-script.md"
+  test-disabled:
+    level: error
+    excludePaths:
+      - "tests/test-disabled.test.ts"
+      - "tests/integration.test.ts"
+      - "src/rules/test-disabled.ts"
+  placeholder-added:
+    level: warning
+    excludePaths:
+      - "tests/**"
+      - "src/rules/placeholder-added.ts"
+      - "README.md"
+      - "docs/**"
+  dependency-added: warning
+  sensitive-file-changed: warning
+  scope-violation: error
+  large-change: warning
