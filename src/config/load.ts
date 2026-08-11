@@ -1,10 +1,17 @@
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { defaultConfig } from "./defaults.js";
 import { AgentGateError } from "../errors.js";
 import { severityOrder } from "../types.js";
-import type { AgentGateConfig, RuleId, RuleLevel, Severity } from "../types.js";
+import type {
+  AgentGateConfig,
+  FindingSuppression,
+  RuleId,
+  RuleLevel,
+  Severity,
+} from "../types.js";
 
 const ruleIds = Object.keys(defaultConfig.rules) as RuleId[];
 const rootKeys = new Set([
@@ -14,9 +21,19 @@ const rootKeys = new Set([
   "deniedPaths",
   "limits",
   "rules",
+  "suppressions",
+  "untracked",
 ]);
 const limitNames = ["changedFiles", "addedLines", "deletedLines"] as const;
 const limitKeys = new Set<string>(limitNames);
+const ruleKeys = new Set(["level", "excludePaths"]);
+const suppressionKeys = new Set(["ruleId", "path", "line", "reason"]);
+const untrackedKeys = new Set([
+  "maxFileBytes",
+  "maxTotalBytes",
+  "readTimeoutMs",
+]);
+const maximumConfigBytes = 1024 * 1024;
 
 function objectAt(value: unknown, location: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -71,6 +88,61 @@ function limit(value: unknown, location: string): number {
   return value;
 }
 
+function boundedPositiveInteger(
+  value: unknown,
+  location: string,
+  maximum: number,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value <= 0 ||
+    value > maximum
+  ) {
+    throw new AgentGateError(
+      `${location} must be an integer between 1 and ${maximum}.`,
+    );
+  }
+  return value;
+}
+
+function ruleId(value: unknown, location: string): RuleId {
+  if (typeof value !== "string" || !ruleIds.includes(value as RuleId)) {
+    throw new AgentGateError(
+      `${location} must be one of: ${ruleIds.join(", ")}.`,
+    );
+  }
+  return value as RuleId;
+}
+
+function suppressions(value: unknown): FindingSuppression[] {
+  if (!Array.isArray(value)) {
+    throw new AgentGateError("suppressions must be a list.");
+  }
+  return value.map((item, index) => {
+    const location = `suppressions[${index}]`;
+    const suppression = objectAt(item, location);
+    assertKnownKeys(suppression, suppressionKeys, location);
+    const path = stringArray([suppression.path], `${location}.path`)[0];
+    const reason = stringArray([suppression.reason], `${location}.reason`)[0];
+    if (!path || !reason)
+      throw new AgentGateError(`${location} is incomplete.`);
+    const result: FindingSuppression = {
+      ruleId: ruleId(suppression.ruleId, `${location}.ruleId`),
+      path,
+      reason,
+    };
+    if (suppression.line !== undefined) {
+      result.line = boundedPositiveInteger(
+        suppression.line,
+        `${location}.line`,
+        Number.MAX_SAFE_INTEGER,
+      );
+    }
+    return result;
+  });
+}
+
 export function validateConfig(input: unknown): AgentGateConfig {
   const root = objectAt(input, "Configuration");
   assertKnownKeys(root, rootKeys, "Configuration");
@@ -98,39 +170,61 @@ export function validateConfig(input: unknown): AgentGateConfig {
     const rules = objectAt(root.rules, "rules");
     assertKnownKeys(rules, new Set(ruleIds), "rules");
     for (const id of ruleIds) {
-      if (rules[id] !== undefined)
-        config.rules[id] = ruleLevel(rules[id], `rules.${id}`);
+      const value = rules[id];
+      if (value === undefined) continue;
+      if (typeof value === "string") {
+        config.rules[id] = ruleLevel(value, `rules.${id}`);
+        continue;
+      }
+      const settings = objectAt(value, `rules.${id}`);
+      assertKnownKeys(settings, ruleKeys, `rules.${id}`);
+      if (settings.level !== undefined) {
+        config.rules[id] = ruleLevel(settings.level, `rules.${id}.level`);
+      }
+      if (settings.excludePaths !== undefined) {
+        config.ruleExcludePaths[id] = stringArray(
+          settings.excludePaths,
+          `rules.${id}.excludePaths`,
+        );
+      }
+    }
+  }
+  if (root.suppressions !== undefined) {
+    config.suppressions = suppressions(root.suppressions);
+  }
+  if (root.untracked !== undefined) {
+    const untracked = objectAt(root.untracked, "untracked");
+    assertKnownKeys(untracked, untrackedKeys, "untracked");
+    if (untracked.maxFileBytes !== undefined) {
+      config.untracked.maxFileBytes = boundedPositiveInteger(
+        untracked.maxFileBytes,
+        "untracked.maxFileBytes",
+        16 * 1024 * 1024,
+      );
+    }
+    if (untracked.maxTotalBytes !== undefined) {
+      config.untracked.maxTotalBytes = boundedPositiveInteger(
+        untracked.maxTotalBytes,
+        "untracked.maxTotalBytes",
+        64 * 1024 * 1024,
+      );
+    }
+    if (untracked.readTimeoutMs !== undefined) {
+      config.untracked.readTimeoutMs = boundedPositiveInteger(
+        untracked.readTimeoutMs,
+        "untracked.readTimeoutMs",
+        60_000,
+      );
     }
   }
   return config;
 }
 
-export async function loadConfig(
-  cwd: string,
-  requestedPath?: string,
-): Promise<AgentGateConfig> {
-  const path = requestedPath
-    ? isAbsolute(requestedPath)
-      ? requestedPath
-      : resolve(cwd, requestedPath)
-    : resolve(cwd, ".agentgate.yml");
-
-  let source: string;
-  try {
-    source = await readFile(path, "utf8");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (!requestedPath && code === "ENOENT")
-      return structuredClone(defaultConfig);
-    throw new AgentGateError(`Cannot read configuration at ${path}.`, {
-      cause: error,
-    });
-  }
-
+export function parseConfig(source: string, location: string): AgentGateConfig {
   const document = parseDocument(source, { prettyErrors: true });
   if (document.errors.length > 0) {
     throw new AgentGateError(
-      `Invalid YAML in ${path}: ${document.errors[0]?.message ?? "parse error"}`,
+      `Invalid YAML in ${location}: ${document.errors[0]?.message ?? "parse error"}`,
     );
   }
   try {
@@ -138,10 +232,55 @@ export async function loadConfig(
   } catch (error) {
     if (error instanceof AgentGateError) {
       throw new AgentGateError(
-        `Invalid configuration at ${path}: ${error.message}`,
+        `Invalid configuration at ${location}: ${error.message}`,
         { cause: error },
       );
     }
     throw error;
   }
+}
+
+export async function loadConfig(
+  cwd: string,
+  requestedPath: string,
+  expectedSha256?: string,
+): Promise<AgentGateConfig> {
+  const path = isAbsolute(requestedPath)
+    ? requestedPath
+    : resolve(cwd, requestedPath);
+
+  let source: Buffer;
+  try {
+    const stats = await lstat(path);
+    if (!stats.isFile()) {
+      throw new AgentGateError(
+        `Configuration at ${path} must be a regular file.`,
+      );
+    }
+    if (stats.size > maximumConfigBytes) {
+      throw new AgentGateError(
+        `Configuration at ${path} exceeds ${maximumConfigBytes} bytes.`,
+      );
+    }
+    source = await readFile(path, { signal: AbortSignal.timeout(2_000) });
+  } catch (error) {
+    if (error instanceof AgentGateError) throw error;
+    throw new AgentGateError(`Cannot read configuration at ${path}.`, {
+      cause: error,
+    });
+  }
+  if (source.length > maximumConfigBytes) {
+    throw new AgentGateError(
+      `Configuration at ${path} exceeds ${maximumConfigBytes} bytes.`,
+    );
+  }
+  if (expectedSha256) {
+    const actual = createHash("sha256").update(source).digest("hex");
+    if (actual !== expectedSha256.toLowerCase()) {
+      throw new AgentGateError(
+        `Configuration SHA-256 mismatch at ${path}: expected ${expectedSha256.toLowerCase()}, got ${actual}.`,
+      );
+    }
+  }
+  return parseConfig(source.toString("utf8"), path);
 }

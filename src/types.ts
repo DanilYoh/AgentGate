@@ -55,6 +55,13 @@ export interface Finding {
 
 export type RuleLevel = Severity | "off";
 
+export interface FindingSuppression {
+  ruleId: RuleId;
+  path: string;
+  line?: number;
+  reason: string;
+}
+
 export interface AgentGateConfig {
   version: 1;
   failOn: Severity;
@@ -66,6 +73,13 @@ export interface AgentGateConfig {
     deletedLines: number;
   };
   rules: Record<RuleId, RuleLevel>;
+  ruleExcludePaths: Record<RuleId, string[]>;
+  suppressions: FindingSuppression[];
+  untracked: {
+    maxFileBytes: number;
+    maxTotalBytes: number;
+    readTimeoutMs: number;
+  };
 }
 
 export interface RuleContext {
@@ -80,11 +94,13 @@ export interface Rule {
 
 export interface ScanResult {
   findings: Finding[];
+  suppressedFindings: Finding[];
   blockingFindings: number;
   summary: {
     changedFiles: number;
     addedLines: number;
     deletedLines: number;
     findings: number;
+    suppressedFindings: number;
   };
 }

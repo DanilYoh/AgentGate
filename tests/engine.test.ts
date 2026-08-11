@@ -21,4 +21,36 @@ describe("scan thresholds", () => {
     );
     expect(result.findings).toEqual([]);
   });
+
+  it("applies per-rule excludes without hiding the file from the summary", () => {
+    const result = scan(
+      addedFile("tests/fixture.ts", ["// TODO: fixture marker"]),
+      config({
+        ruleExcludePaths: { "placeholder-added": ["tests/**"] },
+      }),
+      [placeholderAddedRule],
+    );
+    expect(result.findings).toEqual([]);
+    expect(result.summary.changedFiles).toBe(1);
+  });
+
+  it("tracks policy suppressions separately from active findings", () => {
+    const result = scan(
+      addedFile("src/generated.ts", ["// TODO: generated stub"]),
+      config({
+        suppressions: [
+          {
+            ruleId: "placeholder-added",
+            path: "src/generated.ts",
+            line: 1,
+            reason: "Generated compatibility stub",
+          },
+        ],
+      }),
+      [placeholderAddedRule],
+    );
+    expect(result.findings).toEqual([]);
+    expect(result.suppressedFindings).toHaveLength(1);
+    expect(result.summary.suppressedFindings).toBe(1);
+  });
 });

@@ -1,8 +1,4 @@
-import {
-  redactSecrets,
-  safeEvidence,
-  safeTextFragment,
-} from "../security/redact.js";
+import { safeEvidence, safeTextFragment } from "../security/redact.js";
 import type { ScanResult } from "../types.js";
 
 export function formatText(result: ScanResult): string {
@@ -11,7 +7,10 @@ export function formatText(result: ScanResult): string {
   ];
   if (result.findings.length === 0) {
     lines.push("No findings.");
-    return redactSecrets(lines.join("\n"));
+    if (result.suppressedFindings.length > 0) {
+      lines.push(`${result.suppressedFindings.length} finding(s) suppressed.`);
+    }
+    return lines.join("\n");
   }
   for (const item of result.findings) {
     const location = `${safeTextFragment(item.file)}${item.line === undefined ? "" : `:${item.line}`}`;
@@ -24,5 +23,8 @@ export function formatText(result: ScanResult): string {
     );
   }
   lines.push("", `${result.blockingFindings} blocking finding(s).`);
-  return redactSecrets(lines.join("\n"));
+  if (result.suppressedFindings.length > 0) {
+    lines.push(`${result.suppressedFindings.length} finding(s) suppressed.`);
+  }
+  return lines.join("\n");
 }

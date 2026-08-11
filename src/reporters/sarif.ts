@@ -1,7 +1,8 @@
-import { redactSecrets, safeEvidence } from "../security/redact.js";
+import { safeEvidence } from "../security/redact.js";
 import type { Finding, ScanResult, Severity } from "../types.js";
 import type { Location, Log } from "sarif";
 import { agentGateVersion } from "../version.js";
+import { sanitizeFinding } from "./sanitize.js";
 
 function sarifLevel(severity: Severity): "error" | "warning" | "note" {
   if (severity === "critical" || severity === "high") return "error";
@@ -10,7 +11,7 @@ function sarifLevel(severity: Severity): "error" | "warning" | "note" {
 }
 
 function location(finding: Finding): Location {
-  const uri = redactSecrets(finding.file)
+  const uri = finding.file
     .split("/")
     .map((segment) => encodeURIComponent(segment))
     .join("/");
@@ -27,9 +28,8 @@ function location(finding: Finding): Location {
 }
 
 export function formatSarif(result: ScanResult): string {
-  const firstByRule = new Map(
-    result.findings.map((item) => [item.ruleId, item]),
-  );
+  const findings = result.findings.map(sanitizeFinding);
+  const firstByRule = new Map(findings.map((item) => [item.ruleId, item]));
   const descriptors = [...firstByRule.values()];
   const ruleIndexes = new Map(
     descriptors.map((item, index) => [item.ruleId, index]),
@@ -52,7 +52,7 @@ export function formatSarif(result: ScanResult): string {
             })),
           },
         },
-        results: result.findings.map((item) => ({
+        results: findings.map((item) => ({
           ruleId: item.ruleId,
           ruleIndex: ruleIndexes.get(item.ruleId),
           level: sarifLevel(item.severity),
@@ -62,8 +62,12 @@ export function formatSarif(result: ScanResult): string {
           locations: [location(item)],
           properties: { severity: item.severity },
         })),
+        properties: {
+          blockingFindings: result.blockingFindings,
+          suppressedFindings: result.summary.suppressedFindings,
+        },
       },
     ],
   };
-  return redactSecrets(JSON.stringify(report, null, 2));
+  return JSON.stringify(report, null, 2);
 }

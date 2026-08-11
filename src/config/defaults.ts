@@ -19,4 +19,19 @@ export const defaultConfig: AgentGateConfig = {
     "scope-violation": "high",
     "large-change": "medium",
   },
+  ruleExcludePaths: {
+    "secret-added": [],
+    "test-disabled": [],
+    "placeholder-added": [],
+    "dependency-added": [],
+    "sensitive-file-changed": [],
+    "scope-violation": [],
+    "large-change": [],
+  },
+  suppressions: [],
+  untracked: {
+    maxFileBytes: 1024 * 1024,
+    maxTotalBytes: 8 * 1024 * 1024,
+    readTimeoutMs: 2_000,
+  },
 };

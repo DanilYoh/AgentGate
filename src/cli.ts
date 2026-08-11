@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
-import { loadConfig } from "./config/load.js";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import { defaultConfig } from "./config/defaults.js";
+import { loadConfig, parseConfig } from "./config/load.js";
 import { AgentGateError } from "./errors.js";
 import { scan } from "./engine.js";
 import { GitClient } from "./git/git-client.js";
@@ -25,10 +27,12 @@ interface CliOptions {
   format: OutputFormat;
   base?: string;
   configPath?: string;
+  configSha256?: string;
+  policyRef?: string;
 }
 
 function usage(): string {
-  return `Usage: agentgate check [options]\n\nOptions:\n  --staged              Check staged changes only\n  --base <ref>           Compare the merge base of <ref> and HEAD\n  --format <format>      Output text, json, or sarif (default: text)\n  --config <path>        Read configuration from a YAML file\n  -h, --help             Show help\n  -v, --version          Show version`;
+  return `Usage: agentgate check [options]\n\nOptions:\n  --staged                  Check staged changes only\n  --base <ref>               Compare the merge base of <ref> and HEAD\n  --format <format>          Output text, json, or sarif (default: text)\n  --policy-ref <ref>         Read .agentgate.yml from a trusted Git ref\n  --config <path>            Read an explicit external YAML policy\n  --config-sha256 <sha256>   Require the exact explicit policy content\n  -h, --help                 Show help\n  -v, --version              Show version`;
 }
 
 function parseArgs(args: string[]): CliOptions | "help" | "version" {
@@ -54,11 +58,83 @@ function parseArgs(args: string[]): CliOptions | "help" | "version" {
       const value = args[++index];
       if (!value) throw new AgentGateError("--config requires a path.");
       options.configPath = value;
+    } else if (argument === "--config-sha256") {
+      const value = args[++index];
+      if (!value || !/^[a-f0-9]{64}$/iu.test(value)) {
+        throw new AgentGateError(
+          "--config-sha256 requires a 64-character hexadecimal digest.",
+        );
+      }
+      options.configSha256 = value.toLowerCase();
+    } else if (argument === "--policy-ref") {
+      const value = args[++index];
+      if (!value) throw new AgentGateError("--policy-ref requires a Git ref.");
+      options.policyRef = value;
     } else throw new AgentGateError(`Unknown option: ${argument}`);
   }
   if (options.staged && options.base)
     throw new AgentGateError("--staged and --base cannot be used together.");
+  if (options.configPath && options.policyRef) {
+    throw new AgentGateError(
+      "--config and --policy-ref cannot be used together.",
+    );
+  }
+  if (options.configSha256 && !options.configPath) {
+    throw new AgentGateError("--config-sha256 requires --config.");
+  }
   return options;
+}
+
+function isInside(root: string, path: string): boolean {
+  const local = relative(root, path);
+  return (
+    local === "" ||
+    (local !== ".." && !local.startsWith(`..${sep}`) && !isAbsolute(local))
+  );
+}
+
+function changesDefaultPolicy(patch: ReturnType<typeof parseGitDiff>): boolean {
+  return patch.files.some((file) =>
+    [file.oldPath, file.newPath, file.path].some(
+      (path) => path?.replaceAll("\\", "/") === ".agentgate.yml",
+    ),
+  );
+}
+
+async function loadTrustedConfig(
+  git: GitClient,
+  cwd: string,
+  root: string,
+  options: CliOptions,
+) {
+  if (options.configPath) {
+    const path = isAbsolute(options.configPath)
+      ? options.configPath
+      : resolve(cwd, options.configPath);
+    if (isInside(root, path) && !options.configSha256) {
+      throw new AgentGateError(
+        "A policy inside the checked repository is mutable. Pass its expected --config-sha256, use an external protected --config, or use --policy-ref.",
+      );
+    }
+    return loadConfig(cwd, path, options.configSha256);
+  }
+
+  const commit = options.policyRef
+    ? await git.resolveCommit(options.policyRef)
+    : options.base
+      ? await git.getMergeBase(options.base)
+      : await git.getHeadCommit();
+  if (!commit) return structuredClone(defaultConfig);
+  const source = await git.readFileAt(commit, ".agentgate.yml");
+  if (source === undefined) {
+    if (options.policyRef) {
+      throw new AgentGateError(
+        `.agentgate.yml does not exist at policy ref ${options.policyRef}.`,
+      );
+    }
+    return structuredClone(defaultConfig);
+  }
+  return parseConfig(source, `.agentgate.yml at ${commit}`);
 }
 
 export async function runCli(
@@ -78,12 +154,14 @@ export async function runCli(
     }
     const git = new GitClient(cwd);
     const root = await git.getRepositoryRoot();
-    const config = await loadConfig(
-      options.configPath ? cwd : root,
-      options.configPath,
-    );
-    const patch = await git.getDiff(options);
-    const result = scan(parseGitDiff(patch), config);
+    const config = await loadTrustedConfig(git, cwd, root, options);
+    const patch = parseGitDiff(await git.getDiff(options, config.untracked));
+    if (!options.configPath && changesDefaultPolicy(patch)) {
+      throw new AgentGateError(
+        "The checked diff changes .agentgate.yml. Review policy changes separately, or pin an explicit trusted policy with --config and --config-sha256.",
+      );
+    }
+    const result = scan(patch, config);
     io.stdout(formatReport(result, options.format));
     return result.blockingFindings > 0 ? 1 : 0;
   } catch (error) {

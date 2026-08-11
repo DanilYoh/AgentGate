@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, readFile, readlink } from "node:fs/promises";
+import { lstat, open, readlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { AgentGateError } from "../errors.js";
@@ -9,6 +9,108 @@ const execFileAsync = promisify(execFile);
 export interface DiffOptions {
   staged?: boolean;
   base?: string;
+}
+
+export interface UntrackedOptions {
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  readTimeoutMs: number;
+}
+
+const defaultUntrackedOptions: UntrackedOptions = {
+  maxFileBytes: 1024 * 1024,
+  maxTotalBytes: 8 * 1024 * 1024,
+  readTimeoutMs: 2_000,
+};
+const maximumPolicyBytes = 1024 * 1024;
+
+async function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  description: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new AgentGateError(`${description} timed out.`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function readUntrackedFile(
+  path: string,
+  options: UntrackedOptions,
+): Promise<string> {
+  const stats = await withTimeout(
+    lstat(path),
+    options.readTimeoutMs,
+    `Inspecting untracked file ${path}`,
+  );
+  if (!stats.isFile()) {
+    throw new AgentGateError(
+      `Refusing to read non-regular untracked file ${path}.`,
+    );
+  }
+  if (stats.size > options.maxFileBytes) {
+    throw new AgentGateError(
+      `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+    );
+  }
+
+  const handle = await withTimeout(
+    open(path, "r"),
+    options.readTimeoutMs,
+    `Opening untracked file ${path}`,
+  );
+  try {
+    const openedStats = await withTimeout(
+      handle.stat(),
+      options.readTimeoutMs,
+      `Inspecting opened untracked file ${path}`,
+    );
+    if (!openedStats.isFile()) {
+      throw new AgentGateError(
+        `Refusing to read non-regular untracked file ${path}.`,
+      );
+    }
+    if (openedStats.size > options.maxFileBytes) {
+      throw new AgentGateError(
+        `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+      );
+    }
+
+    const buffer = Buffer.alloc(options.maxFileBytes + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = await withTimeout(
+        handle.read(buffer, offset, buffer.length - offset, offset),
+        options.readTimeoutMs,
+        `Reading untracked file ${path}`,
+      );
+      if (read.bytesRead === 0) break;
+      offset += read.bytesRead;
+    }
+    if (offset > options.maxFileBytes) {
+      throw new AgentGateError(
+        `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+      );
+    }
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    await withTimeout(
+      handle.close(),
+      options.readTimeoutMs,
+      `Closing untracked file ${path}`,
+    );
+  }
 }
 
 function quotePatchPath(path: string, prefix: "a" | "b"): string {
@@ -48,6 +150,7 @@ export class GitClient {
     args: string[],
     cwd = this.repositoryRoot ?? this.cwd,
     allowedExitCodes: readonly number[] = [],
+    maxBuffer = 50 * 1024 * 1024,
   ): Promise<string> {
     try {
       const result = await execFileAsync(
@@ -64,7 +167,7 @@ export class GitClient {
           cwd,
           env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
           encoding: "utf8",
-          maxBuffer: 50 * 1024 * 1024,
+          maxBuffer,
           windowsHide: true,
         },
       );
@@ -103,36 +206,94 @@ export class GitClient {
     return root;
   }
 
-  private async includeUntracked(patch: string, root: string): Promise<string> {
+  public async getHeadCommit(): Promise<string | undefined> {
+    const head = (
+      await this.run(
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+        undefined,
+        [1],
+      )
+    ).trim();
+    return head || undefined;
+  }
+
+  public async resolveCommit(ref: string): Promise<string> {
+    return (
+      await this.run([
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        `${ref}^{commit}`,
+      ])
+    ).trim();
+  }
+
+  public async getMergeBase(ref: string): Promise<string> {
+    const commit = await this.resolveCommit(ref);
+    return (await this.run(["merge-base", commit, "HEAD"])).trim();
+  }
+
+  public async readFileAt(
+    commit: string,
+    path: string,
+  ): Promise<string | undefined> {
+    const object = `${commit}:${path}`;
+    const type = (
+      await this.run(["cat-file", "-t", object], undefined, [1, 128])
+    ).trim();
+    if (!type) return undefined;
+    if (type !== "blob") {
+      throw new AgentGateError(`${path} at ${commit} is not a regular file.`);
+    }
+    return this.run(["show", object], undefined, [], maximumPolicyBytes + 1);
+  }
+
+  private async includeUntracked(
+    patch: string,
+    root: string,
+    options: UntrackedOptions,
+  ): Promise<string> {
     const untrackedOutput = await this.run(
       ["ls-files", "--full-name", "--others", "--exclude-standard", "-z"],
       root,
     );
     const paths = untrackedOutput.split("\0").filter(Boolean);
     let result = patch;
+    let totalBytes = 0;
     for (const path of paths) {
-      try {
-        const absolutePath = resolve(root, path);
-        const stats = await lstat(absolutePath);
-        const isSymbolicLink = stats.isSymbolicLink();
-        const content = isSymbolicLink
-          ? await readlink(absolutePath)
-          : await readFile(absolutePath, "utf8");
-        result += syntheticUntrackedPatch(
-          path,
-          content,
-          isSymbolicLink ? "120000" : "100644",
+      const absolutePath = resolve(root, path);
+      const stats = await withTimeout(
+        lstat(absolutePath),
+        options.readTimeoutMs,
+        `Inspecting untracked file ${path}`,
+      );
+      const isSymbolicLink = stats.isSymbolicLink();
+      const content = isSymbolicLink
+        ? await withTimeout(
+            readlink(absolutePath),
+            options.readTimeoutMs,
+            `Reading untracked symlink ${path}`,
+          )
+        : await readUntrackedFile(absolutePath, options);
+      totalBytes += Buffer.byteLength(content);
+      if (totalBytes > options.maxTotalBytes) {
+        throw new AgentGateError(
+          `Untracked files exceed the ${options.maxTotalBytes}-byte total scan limit.`,
         );
-      } catch {
-        const oldPath = quotePatchPath(path, "a");
-        const newPath = quotePatchPath(path, "b");
-        result += `diff --git ${oldPath} ${newPath}\nnew file mode 100644\nBinary files /dev/null and ${newPath} differ\n`;
       }
+      result += syntheticUntrackedPatch(
+        path,
+        content,
+        isSymbolicLink ? "120000" : "100644",
+      );
     }
     return result;
   }
 
-  public async getDiff(options: DiffOptions): Promise<string> {
+  public async getDiff(
+    options: DiffOptions,
+    untrackedOptions: UntrackedOptions = defaultUntrackedOptions,
+  ): Promise<string> {
     const root = await this.getRepositoryRoot();
     const common = [
       "diff",
@@ -148,30 +309,15 @@ export class GitClient {
 
     if (options.staged) return this.run([...common, "--cached", "--"], root);
     if (options.base) {
-      const baseCommit = (
-        await this.run(
-          [
-            "rev-parse",
-            "--verify",
-            "--end-of-options",
-            `${options.base}^{commit}`,
-          ],
-          root,
-        )
-      ).trim();
-      const mergeBase = (
-        await this.run(["merge-base", baseCommit, "HEAD"], root)
-      ).trim();
+      const mergeBase = await this.getMergeBase(options.base);
       const patch = await this.run([...common, mergeBase, "--"], root);
-      return this.includeUntracked(patch, root);
+      return this.includeUntracked(patch, root, untrackedOptions);
     }
 
-    const head = (
-      await this.run(["rev-parse", "--verify", "--quiet", "HEAD"], root, [1])
-    ).trim();
+    const head = await this.getHeadCommit();
     const patch = head
       ? await this.run([...common, "HEAD", "--"], root)
       : await this.run([...common, "--cached", "--"], root);
-    return this.includeUntracked(patch, root);
+    return this.includeUntracked(patch, root, untrackedOptions);
   }
 }

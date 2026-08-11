@@ -2,6 +2,7 @@ import { changedPaths, finding } from "./helpers.js";
 import type { Rule } from "../types.js";
 
 const patterns = [
+  /^\.agentgate\.ya?ml$/iu,
   /^\.github\/workflows\//iu,
   /(?:^|\/)Dockerfile(?:\.[^/]*)?$/iu,
   /(?:^|\/)(?:migrations?|db\/migrate)(?:\/|$)/iu,

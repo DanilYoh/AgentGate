@@ -15,4 +15,13 @@ describe("placeholder-added", () => {
       }),
     ).toHaveLength(1);
   });
+
+  it("does not treat the ordinary verb implement as a placeholder", () => {
+    expect(
+      placeholderAddedRule.check({
+        diff: addedFile("src/a.ts", ["We implement the interface here."]),
+        config: config(),
+      }),
+    ).toEqual([]);
+  });
 });

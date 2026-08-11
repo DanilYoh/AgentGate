@@ -4,9 +4,14 @@ import type { AgentGateConfig, DiffSet } from "../src/types.js";
 
 export const riskySyntheticSecret = "ghp_A7cK9mQ2vX5zB8nD4fH6jL0pR3sT1uW";
 
-type ConfigOverrides = Omit<Partial<AgentGateConfig>, "limits" | "rules"> & {
+type ConfigOverrides = Omit<
+  Partial<AgentGateConfig>,
+  "limits" | "rules" | "ruleExcludePaths" | "untracked"
+> & {
   limits?: Partial<AgentGateConfig["limits"]>;
   rules?: Partial<AgentGateConfig["rules"]>;
+  ruleExcludePaths?: Partial<AgentGateConfig["ruleExcludePaths"]>;
+  untracked?: Partial<AgentGateConfig["untracked"]>;
 };
 
 export function config(overrides: ConfigOverrides = {}): AgentGateConfig {
@@ -15,6 +20,11 @@ export function config(overrides: ConfigOverrides = {}): AgentGateConfig {
     ...overrides,
     limits: { ...defaultConfig.limits, ...overrides.limits },
     rules: { ...defaultConfig.rules, ...overrides.rules },
+    ruleExcludePaths: {
+      ...defaultConfig.ruleExcludePaths,
+      ...overrides.ruleExcludePaths,
+    },
+    untracked: { ...defaultConfig.untracked, ...overrides.untracked },
   };
 }
 

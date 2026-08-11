@@ -4,6 +4,7 @@ import { addedFile, config } from "./fixtures.js";
 
 describe("sensitive-file-changed", () => {
   it.each([
+    ".agentgate.yml",
     ".github/workflows/ci.yml",
     "Dockerfile",
     "db/migrations/001.sql",

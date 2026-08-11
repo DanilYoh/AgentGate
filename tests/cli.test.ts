@@ -37,6 +37,12 @@ describe("CLI argument handling", () => {
     [["check", "--staged", "--base", "HEAD"], "cannot be used together"],
     [["check", "--format", "xml"], "--format must be one of"],
     [["check", "--config"], "--config requires a path"],
+    [["check", "--config-sha256", "abc"], "64-character"],
+    [["check", "--config-sha256", "a".repeat(64)], "requires --config"],
+    [
+      ["check", "--config", "policy.yml", "--policy-ref", "main"],
+      "cannot be used together",
+    ],
   ])("returns 2 for invalid arguments %#", async (args, message) => {
     const output = capture();
     expect(await runCli(args, process.cwd(), output.io)).toBe(2);

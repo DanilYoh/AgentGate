@@ -26,4 +26,55 @@ describe("configuration", () => {
       validateConfig({ version: 1, rules: { mystery: "error" } }),
     ).toThrow("rules contains unknown key 'mystery'");
   });
+
+  it("accepts rule-level path exclusions and audited suppressions", () => {
+    const config = validateConfig({
+      version: 1,
+      rules: {
+        "secret-added": {
+          level: "error",
+          excludePaths: ["tests/fixtures/**"],
+        },
+      },
+      suppressions: [
+        {
+          ruleId: "placeholder-added",
+          path: "src/generated.ts",
+          line: 12,
+          reason: "Generated compatibility stub",
+        },
+      ],
+      untracked: {
+        maxFileBytes: 4096,
+        maxTotalBytes: 8192,
+        readTimeoutMs: 500,
+      },
+    });
+
+    expect(config.rules["secret-added"]).toBe("high");
+    expect(config.ruleExcludePaths["secret-added"]).toEqual([
+      "tests/fixtures/**",
+    ]);
+    expect(config.suppressions[0]).toMatchObject({
+      ruleId: "placeholder-added",
+      line: 12,
+    });
+    expect(config.untracked).toEqual({
+      maxFileBytes: 4096,
+      maxTotalBytes: 8192,
+      readTimeoutMs: 500,
+    });
+  });
+
+  it("rejects unsafe untracked limits and incomplete suppressions", () => {
+    expect(() =>
+      validateConfig({ version: 1, untracked: { maxFileBytes: 0 } }),
+    ).toThrow("untracked.maxFileBytes must be an integer between 1");
+    expect(() =>
+      validateConfig({
+        version: 1,
+        suppressions: [{ ruleId: "secret-added", path: "test.ts" }],
+      }),
+    ).toThrow("suppressions[0].reason");
+  });
 });

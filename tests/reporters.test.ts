@@ -28,15 +28,34 @@ describe("reporters", () => {
     expect(report.findings).toBeInstanceOf(Array);
   });
 
+  it("redacts fields before JSON and SARIF serialization", () => {
+    const unsafe = structuredClone(result);
+    const first = unsafe.findings[0];
+    if (!first) throw new Error("fixture did not produce a finding");
+    first.file = "src/token=abcdefghijk";
+
+    const json = formatJson(unsafe);
+    const sarif = formatSarif(unsafe);
+    expect(() => JSON.parse(json) as unknown).not.toThrow();
+    expect(() => JSON.parse(sarif) as unknown).not.toThrow();
+    expect(json).toContain("[REDACTED]");
+    expect(sarif).toContain("REDACTED");
+  });
+
   it("produces the required SARIF 2.1.0 structure", () => {
     const report = JSON.parse(formatSarif(result)) as {
       version: string;
-      runs: Array<{ tool: { driver: { name: string } }; results: unknown[] }>;
+      runs: Array<{
+        tool: { driver: { name: string } };
+        results: unknown[];
+        properties: { suppressedFindings: number };
+      }>;
     };
     expect(report.version).toBe("2.1.0");
     expect(report.runs).toHaveLength(1);
     expect(report.runs[0]?.tool.driver.name).toBe("AgentGate");
     expect(report.runs[0]?.results).toHaveLength(1);
+    expect(report.runs[0]?.properties.suppressedFindings).toBe(0);
   });
 
   it("redacts every text field, not only evidence", () => {

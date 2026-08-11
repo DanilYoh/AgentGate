@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   access,
   mkdir,
@@ -186,6 +187,8 @@ describe("Git and CLI integration", () => {
       "version: 1\nrules:\n  secret-added: off\n",
       "utf8",
     );
+    git(cwd, ["add", ".agentgate.yml"]);
+    git(cwd, ["commit", "--quiet", "-m", "trusted policy"]);
     await writeFile(
       join(cwd, "app.js"),
       `export const token = "${riskySyntheticSecret}";\n`,
@@ -198,6 +201,63 @@ describe("Git and CLI integration", () => {
     });
     expect(code).toBe(0);
     expect(output[0]).toContain("No findings");
+  });
+
+  it("ignores an unstaged policy weakening during --staged checks", async () => {
+    const cwd = await repository();
+    await writeFile(
+      join(cwd, ".agentgate.yml"),
+      "version: 1\nrules:\n  secret-added: off\n",
+      "utf8",
+    );
+    await writeFile(
+      join(cwd, "app.js"),
+      `export const token = "${riskySyntheticSecret}";\n`,
+      "utf8",
+    );
+    git(cwd, ["add", "app.js"]);
+    const errors: string[] = [];
+    const code = await runCli(["check", "--staged"], cwd, {
+      stdout: () => undefined,
+      stderr: (value) => errors.push(value),
+    });
+    expect(code).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  it("fails closed when the checked diff changes the default policy", async () => {
+    const cwd = await repository();
+    await writeFile(join(cwd, ".agentgate.yml"), "version: 1\n", "utf8");
+    const errors: string[] = [];
+    const code = await runCli(["check"], cwd, {
+      stdout: () => undefined,
+      stderr: (value) => errors.push(value),
+    });
+    expect(code).toBe(2);
+    expect(errors[0]).toContain("changes .agentgate.yml");
+  });
+
+  it("loads policy from an explicitly trusted Git ref", async () => {
+    const cwd = await repository();
+    await writeFile(
+      join(cwd, ".agentgate.yml"),
+      "version: 1\nrules:\n  secret-added: off\n",
+      "utf8",
+    );
+    git(cwd, ["add", ".agentgate.yml"]);
+    git(cwd, ["commit", "--quiet", "-m", "trusted policy"]);
+    git(cwd, ["branch", "trusted-policy"]);
+    await writeFile(
+      join(cwd, "app.js"),
+      `export const token = "${riskySyntheticSecret}";\n`,
+      "utf8",
+    );
+    expect(
+      await runCli(["check", "--policy-ref", "trusted-policy"], cwd, {
+        stdout: () => undefined,
+        stderr: () => undefined,
+      }),
+    ).toBe(0);
   });
 
   it("includes untracked files in --base mode", async () => {
@@ -319,15 +379,85 @@ describe("Git and CLI integration", () => {
 
   it("returns 2 for an invalid explicit configuration", async () => {
     const cwd = await repository();
-    await writeFile(join(cwd, "bad.yml"), "version: 2\n", "utf8");
+    const source = "version: 2\n";
+    await writeFile(join(cwd, "bad.yml"), source, "utf8");
+    const digest = createHash("sha256").update(source).digest("hex");
     const errors: string[] = [];
-    const code = await runCli(["check", "--config", "bad.yml"], cwd, {
-      stdout: () => undefined,
-      stderr: (value) => errors.push(value),
-    });
+    const code = await runCli(
+      ["check", "--config", "bad.yml", "--config-sha256", digest],
+      cwd,
+      {
+        stdout: () => undefined,
+        stderr: (value) => errors.push(value),
+      },
+    );
     expect(code).toBe(2);
     expect(errors[0]).toContain("Configuration version must be 1");
   });
+
+  it("rejects an unpinned policy from inside the checked repository", async () => {
+    const cwd = await repository();
+    await writeFile(join(cwd, "policy.yml"), "version: 1\n", "utf8");
+    const errors: string[] = [];
+    expect(
+      await runCli(["check", "--config", "policy.yml"], cwd, {
+        stdout: () => undefined,
+        stderr: (value) => errors.push(value),
+      }),
+    ).toBe(2);
+    expect(errors[0]).toContain("inside the checked repository is mutable");
+  });
+
+  it("rejects explicit policy content that does not match its pinned hash", async () => {
+    const cwd = await repository();
+    await writeFile(join(cwd, "policy.yml"), "version: 1\n", "utf8");
+    const errors: string[] = [];
+    expect(
+      await runCli(
+        ["check", "--config", "policy.yml", "--config-sha256", "0".repeat(64)],
+        cwd,
+        {
+          stdout: () => undefined,
+          stderr: (value) => errors.push(value),
+        },
+      ),
+    ).toBe(2);
+    expect(errors[0]).toContain("SHA-256 mismatch");
+  });
+
+  it("fails closed for an oversized untracked file", async () => {
+    const cwd = await repository();
+    await writeFile(join(cwd, "large.txt"), "123456789", "utf8");
+    await expect(
+      new GitClient(cwd).getDiff(
+        {},
+        { maxFileBytes: 8, maxTotalBytes: 16, readTimeoutMs: 500 },
+      ),
+    ).rejects.toThrow("8-byte scan limit");
+  });
+
+  it("fails closed when aggregate untracked content exceeds its limit", async () => {
+    const cwd = await repository();
+    await writeFile(join(cwd, "first.txt"), "12345", "utf8");
+    await writeFile(join(cwd, "second.txt"), "67890", "utf8");
+    await expect(
+      new GitClient(cwd).getDiff(
+        {},
+        { maxFileBytes: 8, maxTotalBytes: 8, readTimeoutMs: 500 },
+      ),
+    ).rejects.toThrow("8-byte total scan limit");
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "refuses an untracked FIFO without opening it",
+    async () => {
+      const cwd = await repository();
+      execFileSync("mkfifo", [join(cwd, "input.pipe")]);
+      await expect(new GitClient(cwd).getDiff({})).rejects.toThrow(
+        "non-regular untracked file",
+      );
+    },
+  );
 
   it("does not execute a base ref as shell syntax", async () => {
     const cwd = await repository();
@@ -349,8 +479,14 @@ describe("Git and CLI integration", () => {
   it("redacts secrets from CLI error messages", async () => {
     const cwd = await repository();
     const secret = riskySyntheticSecret;
+    const policyDirectory = await mkdtemp(
+      join(tmpdir(), "agentgate-policy-test-"),
+    );
+    temporaryDirectories.push(policyDirectory);
+    const policy = join(policyDirectory, `${secret}.yml`);
+    await writeFile(policy, "version: 2\n", "utf8");
     const errors: string[] = [];
-    const code = await runCli(["check", "--config", `${secret}.yml`], cwd, {
+    const code = await runCli(["check", "--config", policy], cwd, {
       stdout: () => undefined,
       stderr: (value) => errors.push(value),
     });

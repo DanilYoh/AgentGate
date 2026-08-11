@@ -2,7 +2,7 @@ import { finding } from "./helpers.js";
 import type { Rule } from "../types.js";
 
 const patterns = [
-  /\b(?:TODO|FIXME|IMPLEMENT(?:\s+ME)?)\b/iu,
+  /\b(?:TODO|FIXME|IMPLEMENT\s+ME)\b/iu,
   /\b(?:NotImplementedException|NotImplementedError)\b/u,
   /\bunimplemented!\s*\(/u,
   /throw\s+new\s+Error\s*\(\s*["'][^"']*not implemented/iu,
