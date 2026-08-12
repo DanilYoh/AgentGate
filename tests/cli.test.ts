@@ -28,7 +28,7 @@ describe("CLI argument handling", () => {
   it("returns 0 for version", async () => {
     const output = capture();
     expect(await runCli(["--version"], process.cwd(), output.io)).toBe(0);
-    expect(output.stdout).toEqual(["0.1.0"]);
+    expect(output.stdout).toEqual(["1.0.0"]);
   });
 
   it.each([

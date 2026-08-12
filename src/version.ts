@@ -1,1 +1,1 @@
-export const agentGateVersion = "0.1.0";
+export const agentGateVersion = "1.0.0";

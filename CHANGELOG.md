@@ -4,6 +4,10 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+## 1.0.0 - 2026-08-12
+
+### Added
+
 - Add a verified release workflow with immutable Action dependencies, token-free
   npm OIDC publishing, a separately validated tarball, code owners, and
   documented bootstrap and security processes.

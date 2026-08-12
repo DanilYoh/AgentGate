@@ -29,7 +29,7 @@ npm install
 npm run build
 npm pack
 # In a separate Git repository:
-npm install --save-dev /path/to/danilyoh-agentgate-0.1.0.tgz
+npm install --save-dev /path/to/danilyoh-agentgate-1.0.0.tgz
 npm exec --offline -- agentgate check
 ```
 
