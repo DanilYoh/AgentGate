@@ -7,6 +7,7 @@ import { loadConfig, parseConfig } from "./config/load.js";
 import { AgentGateError } from "./errors.js";
 import { scan } from "./engine.js";
 import { GitClient } from "./git/git-client.js";
+import type { GitSnapshot } from "./git/git-client.js";
 import { parseGitDiff } from "./git/diff-parser.js";
 import { formatReport } from "./reporters/index.js";
 import { safeTextFragment } from "./security/redact.js";
@@ -118,6 +119,7 @@ async function loadTrustedConfig(
   cwd: string,
   root: string,
   options: CliOptions,
+  snapshot: GitSnapshot,
 ) {
   if (options.configPath) {
     const path = isAbsolute(options.configPath)
@@ -134,8 +136,8 @@ async function loadTrustedConfig(
   const commit = options.policyRef
     ? await git.resolveCommit(options.policyRef)
     : options.base
-      ? await git.getMergeBase(options.base)
-      : await git.getHeadCommit();
+      ? snapshot.mergeBase
+      : snapshot.head;
   if (!commit) return structuredClone(defaultConfig);
   const source = await git.readFileAt(commit, ".agentgate.yml");
   if (source === undefined) {
@@ -166,14 +168,19 @@ export async function runCli(
     }
     const git = new GitClient(cwd);
     const root = await git.getRepositoryRoot();
-    const config = await loadTrustedConfig(git, cwd, root, options);
-    const patch = parseGitDiff(await git.getDiff(options, config.untracked));
+    const snapshot = await git.captureSnapshot(options);
+    const config = await loadTrustedConfig(git, cwd, root, options, snapshot);
+    git.configure(config.git);
+    const sourcePatch = await git.getDiff(snapshot, config.untracked);
+    const patch = parseGitDiff(sourcePatch);
     if (!options.configPath && changesDefaultPolicy(patch)) {
       throw new AgentGateError(
         "The checked diff changes .agentgate.yml. Review policy changes separately, or pin an explicit trusted policy with --config and --config-sha256.",
       );
     }
     const result = scan(patch, config);
+    await git.assertSnapshotUnchanged(snapshot);
+    await git.assertDiffUnchanged(snapshot, config.untracked, sourcePatch);
     io.stdout(formatReport(result, options.format));
     return result.blockingFindings > 0 ? 1 : 0;
   } catch (error) {

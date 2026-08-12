@@ -45,10 +45,13 @@ describe("configuration", () => {
         },
       ],
       untracked: {
+        maxFiles: 100,
         maxFileBytes: 4096,
+        maxSymlinkBytes: 1024,
         maxTotalBytes: 8192,
         readTimeoutMs: 500,
       },
+      git: { commandTimeoutMs: 5000, maxDiffBytes: 16384 },
     });
 
     expect(config.rules["secret-added"]).toBe("high");
@@ -60,9 +63,15 @@ describe("configuration", () => {
       line: 12,
     });
     expect(config.untracked).toEqual({
+      maxFiles: 100,
       maxFileBytes: 4096,
+      maxSymlinkBytes: 1024,
       maxTotalBytes: 8192,
       readTimeoutMs: 500,
+    });
+    expect(config.git).toEqual({
+      commandTimeoutMs: 5000,
+      maxDiffBytes: 16384,
     });
   });
 
@@ -70,6 +79,12 @@ describe("configuration", () => {
     expect(() =>
       validateConfig({ version: 1, untracked: { maxFileBytes: 0 } }),
     ).toThrow("untracked.maxFileBytes must be an integer between 1");
+    expect(() =>
+      validateConfig({ version: 1, untracked: { maxFiles: 0 } }),
+    ).toThrow("untracked.maxFiles must be an integer between 1");
+    expect(() =>
+      validateConfig({ version: 1, git: { commandTimeoutMs: 0 } }),
+    ).toThrow("git.commandTimeoutMs must be an integer between 1");
     expect(() =>
       validateConfig({
         version: 1,

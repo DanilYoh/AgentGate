@@ -10,6 +10,9 @@ All notable changes to this project will be documented here.
   refs and SHA-256-pinned external policy, and fail closed on mutable policy.
 - Bound and time-limit untracked-file reads and reject special files.
 - Redact individual JSON and SARIF fields before serialization.
+- Pin each scan to one resolved commit/index snapshot, reject concurrent
+  mutations, and bound Git execution, diff size, untracked count, and symlink
+  targets.
 
 ### Changed
 

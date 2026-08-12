@@ -124,8 +124,14 @@ limits:
   addedLines: 500
   deletedLines: 300
 
+git:
+  commandTimeoutMs: 30000
+  maxDiffBytes: 52428800
+
 untracked:
+  maxFiles: 10000
   maxFileBytes: 1048576
+  maxSymlinkBytes: 4096
   maxTotalBytes: 8388608
   readTimeoutMs: 2000
 
@@ -160,11 +166,18 @@ Configuration is validated before reporting. Unknown keys, invalid path-list
 types, negative limits, unsupported versions, and unknown rules return exit code
 2 with the failing configuration path.
 
-Untracked paths are inspected with `lstat` before opening. Symlinks are scanned
-as link text; FIFOs, devices, sockets, unreadable files, files over
-`untracked.maxFileBytes`, aggregate content over `untracked.maxTotalBytes`, and
-reads exceeding `untracked.readTimeoutMs` fail closed with exit code 2. File
-content is read through a bounded buffer.
+Git commands are bounded by `git.commandTimeoutMs`, and both tracked and
+synthetic-untracked patches are bounded by `git.maxDiffBytes`. Untracked paths
+are inspected with `lstat` before opening. Symlinks are scanned as link text;
+FIFOs, devices, sockets, unreadable files, too many paths, files or symlink
+targets over their configured limit, aggregate content over
+`untracked.maxTotalBytes`, and reads exceeding `untracked.readTimeoutMs` fail
+closed with exit code 2. File content is read through a bounded buffer.
+
+AgentGate resolves `HEAD`, the optional base, merge base, and index state once
+per check. Before reporting, it verifies that `HEAD`, the index, and the
+complete tracked/untracked patch still match the scanned snapshot. Concurrent
+repository changes therefore fail closed with exit code 2 and should be retried.
 
 ## Reports and secret safety
 

@@ -431,7 +431,13 @@ describe("Git and CLI integration", () => {
     await expect(
       new GitClient(cwd).getDiff(
         {},
-        { maxFileBytes: 8, maxTotalBytes: 16, readTimeoutMs: 500 },
+        {
+          maxFiles: 10,
+          maxFileBytes: 8,
+          maxSymlinkBytes: 8,
+          maxTotalBytes: 16,
+          readTimeoutMs: 500,
+        },
       ),
     ).rejects.toThrow("8-byte scan limit");
   });
@@ -443,9 +449,86 @@ describe("Git and CLI integration", () => {
     await expect(
       new GitClient(cwd).getDiff(
         {},
-        { maxFileBytes: 8, maxTotalBytes: 8, readTimeoutMs: 500 },
+        {
+          maxFiles: 10,
+          maxFileBytes: 8,
+          maxSymlinkBytes: 8,
+          maxTotalBytes: 8,
+          readTimeoutMs: 500,
+        },
       ),
     ).rejects.toThrow("8-byte total scan limit");
+  });
+
+  it("fails closed when the untracked file-count limit is exceeded", async () => {
+    const cwd = await repository();
+    await writeFile(join(cwd, "first.txt"), "one", "utf8");
+    await writeFile(join(cwd, "second.txt"), "two", "utf8");
+    await expect(
+      new GitClient(cwd).getDiff(
+        {},
+        {
+          maxFiles: 1,
+          maxFileBytes: 8,
+          maxSymlinkBytes: 8,
+          maxTotalBytes: 16,
+          readTimeoutMs: 500,
+        },
+      ),
+    ).rejects.toThrow("1-file scan limit");
+  });
+
+  it("fails closed when the configured diff-size limit is exceeded", async () => {
+    const cwd = await repository();
+    await writeFile(
+      join(cwd, "app.js"),
+      `export const value = "${"x".repeat(512)}";\n`,
+      "utf8",
+    );
+    const client = new GitClient(cwd);
+    client.configure({ commandTimeoutMs: 5_000, maxDiffBytes: 128 });
+    await expect(client.getDiff({})).rejects.toThrow(/128-byte .*limit/u);
+  });
+
+  it("detects index mutation after a scan snapshot is captured", async () => {
+    const cwd = await repository();
+    const client = new GitClient(cwd);
+    const snapshot = await client.captureSnapshot({ staged: true });
+    await writeFile(join(cwd, "new.js"), "export const value = 2;\n", "utf8");
+    git(cwd, ["add", "new.js"]);
+    await expect(client.assertSnapshotUnchanged(snapshot)).rejects.toThrow(
+      "HEAD or index changed",
+    );
+  });
+
+  it("detects working-tree mutation after a diff is captured", async () => {
+    const cwd = await repository();
+    const client = new GitClient(cwd);
+    const snapshot = await client.captureSnapshot({});
+    const patch = await client.getDiff(snapshot);
+    await writeFile(join(cwd, "app.js"), "export const value = 3;\n", "utf8");
+    await expect(
+      client.assertDiffUnchanged(snapshot, defaultConfig.untracked, patch),
+    ).rejects.toThrow("modified while AgentGate was scanning");
+  });
+
+  it("rejects an oversized Git-backed policy before parsing it", async () => {
+    const cwd = await repository();
+    await writeFile(
+      join(cwd, ".agentgate.yml"),
+      "x".repeat(1024 * 1024 + 1),
+      "utf8",
+    );
+    git(cwd, ["add", ".agentgate.yml"]);
+    git(cwd, ["commit", "--quiet", "-m", "oversized policy"]);
+    const errors: string[] = [];
+    expect(
+      await runCli(["check"], cwd, {
+        stdout: () => undefined,
+        stderr: (value) => errors.push(value),
+      }),
+    ).toBe(2);
+    expect(errors[0]).toContain("exceeds 1048576 bytes");
   });
 
   it.runIf(process.platform !== "win32")(

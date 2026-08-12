@@ -43,6 +43,12 @@ Git failures, unreadable untracked files, special files, oversized files, and
 untracked read timeouts return exit code 2. Callers must treat both exit codes 1
 and 2 as blocking.
 
+Each check resolves the relevant commits and index state once, then rechecks
+`HEAD`, the index, and the complete patch before emitting a report. Concurrent
+mutation is treated as an error rather than allowing a result for stale input.
+Git execution, diff output, untracked path count, individual content, symlink
+targets, aggregate content, and filesystem reads all have explicit limits.
+
 Rule exclusions and finding suppressions live inside the trusted policy. A
 suppression is auditable and requires a reason; it can be narrowed to an exact
 line. Reports keep the number of suppressed findings separate from active

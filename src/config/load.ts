@@ -22,14 +22,18 @@ const rootKeys = new Set([
   "limits",
   "rules",
   "suppressions",
+  "git",
   "untracked",
 ]);
 const limitNames = ["changedFiles", "addedLines", "deletedLines"] as const;
 const limitKeys = new Set<string>(limitNames);
 const ruleKeys = new Set(["level", "excludePaths"]);
 const suppressionKeys = new Set(["ruleId", "path", "line", "reason"]);
+const gitKeys = new Set(["commandTimeoutMs", "maxDiffBytes"]);
 const untrackedKeys = new Set([
+  "maxFiles",
   "maxFileBytes",
+  "maxSymlinkBytes",
   "maxTotalBytes",
   "readTimeoutMs",
 ]);
@@ -192,14 +196,46 @@ export function validateConfig(input: unknown): AgentGateConfig {
   if (root.suppressions !== undefined) {
     config.suppressions = suppressions(root.suppressions);
   }
+  if (root.git !== undefined) {
+    const git = objectAt(root.git, "git");
+    assertKnownKeys(git, gitKeys, "git");
+    if (git.commandTimeoutMs !== undefined) {
+      config.git.commandTimeoutMs = boundedPositiveInteger(
+        git.commandTimeoutMs,
+        "git.commandTimeoutMs",
+        120_000,
+      );
+    }
+    if (git.maxDiffBytes !== undefined) {
+      config.git.maxDiffBytes = boundedPositiveInteger(
+        git.maxDiffBytes,
+        "git.maxDiffBytes",
+        256 * 1024 * 1024,
+      );
+    }
+  }
   if (root.untracked !== undefined) {
     const untracked = objectAt(root.untracked, "untracked");
     assertKnownKeys(untracked, untrackedKeys, "untracked");
+    if (untracked.maxFiles !== undefined) {
+      config.untracked.maxFiles = boundedPositiveInteger(
+        untracked.maxFiles,
+        "untracked.maxFiles",
+        100_000,
+      );
+    }
     if (untracked.maxFileBytes !== undefined) {
       config.untracked.maxFileBytes = boundedPositiveInteger(
         untracked.maxFileBytes,
         "untracked.maxFileBytes",
         16 * 1024 * 1024,
+      );
+    }
+    if (untracked.maxSymlinkBytes !== undefined) {
+      config.untracked.maxSymlinkBytes = boundedPositiveInteger(
+        untracked.maxSymlinkBytes,
+        "untracked.maxSymlinkBytes",
+        64 * 1024,
       );
     }
     if (untracked.maxTotalBytes !== undefined) {

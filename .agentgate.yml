@@ -6,8 +6,14 @@ limits:
   addedLines: 10000
   deletedLines: 5000
 
+git:
+  commandTimeoutMs: 30000
+  maxDiffBytes: 52428800
+
 untracked:
+  maxFiles: 10000
   maxFileBytes: 1048576
+  maxSymlinkBytes: 4096
   maxTotalBytes: 8388608
   readTimeoutMs: 2000
 

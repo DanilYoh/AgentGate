@@ -75,8 +75,14 @@ export interface AgentGateConfig {
   rules: Record<RuleId, RuleLevel>;
   ruleExcludePaths: Record<RuleId, string[]>;
   suppressions: FindingSuppression[];
+  git: {
+    commandTimeoutMs: number;
+    maxDiffBytes: number;
+  };
   untracked: {
+    maxFiles: number;
     maxFileBytes: number;
+    maxSymlinkBytes: number;
     maxTotalBytes: number;
     readTimeoutMs: number;
   };
