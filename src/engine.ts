@@ -25,7 +25,7 @@ export function scan(
       const paths = [file.oldPath, file.newPath, file.path].filter(
         (path): path is string => Boolean(path),
       );
-      return !paths.some((path) => matchesPath(path, excludePaths));
+      return !paths.every((path) => matchesPath(path, excludePaths));
     });
     const filteredDiff: DiffSet = {
       files,

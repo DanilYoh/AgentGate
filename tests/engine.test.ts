@@ -34,6 +34,43 @@ describe("scan thresholds", () => {
     expect(result.summary.changedFiles).toBe(1);
   });
 
+  it("does not let a rename escape a rule exclusion", () => {
+    const diff = addedFile("src/runtime.ts", ["// TODO: production stub"]);
+    const file = diff.files[0];
+    if (!file) throw new Error("fixture did not produce a file");
+    file.oldPath = "tests/fixtures/runtime.ts";
+    file.newPath = "src/runtime.ts";
+
+    const result = scan(
+      diff,
+      config({
+        ruleExcludePaths: { "placeholder-added": ["tests/fixtures/**"] },
+      }),
+      [placeholderAddedRule],
+    );
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.file).toBe("src/runtime.ts");
+  });
+
+  it("excludes a rename only when every path is excluded", () => {
+    const diff = addedFile("tests/fixtures/new.ts", ["// TODO: fixture"]);
+    const file = diff.files[0];
+    if (!file) throw new Error("fixture did not produce a file");
+    file.oldPath = "tests/fixtures/old.ts";
+    file.newPath = "tests/fixtures/new.ts";
+
+    const result = scan(
+      diff,
+      config({
+        ruleExcludePaths: { "placeholder-added": ["tests/fixtures/**"] },
+      }),
+      [placeholderAddedRule],
+    );
+
+    expect(result.findings).toEqual([]);
+  });
+
   it("tracks policy suppressions separately from active findings", () => {
     const result = scan(
       addedFile("src/generated.ts", ["// TODO: generated stub"]),
