@@ -21,6 +21,8 @@ npm run typecheck
 npm run test:coverage
 npm run build
 npm run test:package
+npm run check:action-bundle
+npm run test:action-bundle
 npm run dogfood -- origin/main
 ```
 

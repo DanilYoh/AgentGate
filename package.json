@@ -28,6 +28,7 @@
     "bundle:action": "node scripts/bundle-action.mjs",
     "check:action-bundle": "node scripts/bundle-action.mjs --check",
     "test:action-bundle": "node scripts/verify-action-bundle.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
     "dogfood": "node scripts/dogfood.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -42,7 +43,16 @@
     "cli",
     "coding-agents"
   ],
+  "author": "DanilYoh",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DanilYoh/AgentGate.git"
+  },
+  "homepage": "https://github.com/DanilYoh/AgentGate#readme",
+  "bugs": {
+    "url": "https://github.com/DanilYoh/AgentGate/issues"
+  },
   "publishConfig": {
     "access": "public"
   },

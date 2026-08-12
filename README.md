@@ -276,7 +276,7 @@ jobs:
   agentgate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -293,7 +293,7 @@ jobs:
 
       - name: Upload AgentGate SARIF
         if: always() && steps.agentgate.outputs.report-path != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           sarif_file: ${{ steps.agentgate.outputs.report-path }}
 ```
@@ -315,6 +315,11 @@ Git is invoked directly without a shell. External diff and text-conversion
 drivers, pagers, and filesystem monitors are disabled for the scan;
 user-provided refs are resolved after Git's end-of-options marker. Text output
 also escapes terminal control characters from paths and errors.
+
+Maintainers should follow the verified, token-free process in
+[`docs/releasing.md`](docs/releasing.md). Security reports belong in a private
+[GitHub security advisory](https://github.com/DanilYoh/AgentGate/security/advisories/new),
+not in a public issue.
 
 ## AgentGate and ordinary linters
 

@@ -4,6 +4,9 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+- Add a verified release workflow with immutable Action dependencies, token-free
+  npm OIDC publishing, a separately validated tarball, code owners, and
+  documented bootstrap and security processes.
 - Add a self-contained Node.js 24 GitHub Action with immutable head, base, and
   policy inputs, protected report files, a reproducible committed bundle, and
   isolated bundle verification without `node_modules`.
