@@ -267,11 +267,14 @@ npm run format
 npm run lint
 npm run typecheck
 npm test
+npm run test:coverage
 npm run build
 npm run test:package
 npm run dogfood -- origin/main
 ```
 
+`test:coverage` enforces global statement, branch, function, and line floors;
+the suite includes deterministic parser/glob/redaction fuzz invariants.
 `test:package` runs `npm pack`, installs the tarball into a temporary Git
 repository, and executes the packed CLI. The test suite also creates temporary
 repositories for end-to-end diff and exit-code coverage. See

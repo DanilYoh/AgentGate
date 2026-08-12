@@ -18,7 +18,7 @@ Before submitting a change, run the same checks as CI:
 npm run format
 npm run lint
 npm run typecheck
-npm test
+npm run test:coverage
 npm run build
 npm run test:package
 npm run dogfood -- origin/main

@@ -4,8 +4,10 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
-- Prevent a rename from bypassing a rule exclusion when only its old or new
-  path is excluded; all paths must now match before the file is skipped.
+- Add deterministic fuzz/property invariants for diff parsing, path matching,
+  secret redaction, and terminal escaping, and enforce coverage floors in CI.
+- Prevent a rename from bypassing a rule exclusion when only its old or new path
+  is excluded; all paths must now match before the file is skipped.
 - Emit sanitized, structured exit-code 2 reports on stdout for JSON and SARIF,
   with stable error categories and a published JSON report schema. Text errors
   remain on stderr.
