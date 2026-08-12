@@ -243,15 +243,18 @@ and `2`.
 
 ## Hooks and CI
 
+Ready-to-copy templates are included under [`examples/hooks`](examples/hooks).
 With Husky, put this in `.husky/pre-commit`:
 
 ```sh
 npm exec --offline -- agentgate check --staged
 ```
 
-Lefthook uses the same command under `pre-commit.commands.agentgate.run`. A
-framework-agnostic `pre-commit` entry can use `language: system`,
-`pass_filenames: false`, and that command as `entry`.
+Lefthook uses the same command under `pre-commit.commands.agentgate.run`. The
+framework-agnostic pre-commit template uses `language: system`,
+`pass_filenames: false`, `always_run: true`, and that command as `entry`. These
+integrations deliberately use the locally installed scoped package and
+`--offline`, so npm cannot fall back to downloading a different executable.
 
 In CI, fetch full history and select policy from the protected base branch:
 

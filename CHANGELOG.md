@@ -4,6 +4,7 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+- Ship tested, offline hook templates for Husky, Lefthook, and pre-commit.
 - Add safe `init`, `validate-config`, and `explain` commands, plus a single rule
   metadata registry shared by CLI explanations and SARIF descriptors.
 - Scan bounded full context for existing dependency manifests, preventing
