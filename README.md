@@ -53,20 +53,29 @@ AgentGate checked 1 file(s): +1 -0
 
 ## What it checks
 
-| Rule                     | Added or changed risk                                                              |
-| ------------------------ | ---------------------------------------------------------------------------------- |
-| `secret-added`           | Common tokens, credential assignments, JWTs, and private-key headers               |
-| `test-disabled`          | `.skip`, `xit`, `xdescribe`, pytest skip markers, `@Disabled`, and similar forms   |
-| `placeholder-added`      | `TODO`, `FIXME`, not-implemented exceptions/macros, and explicit stubs             |
-| `dependency-added`       | New names and versions in `package.json`, `requirements.txt`, and `pyproject.toml` |
-| `sensitive-file-changed` | GitHub Actions, Dockerfiles, migrations, auth/permission files, and lockfiles      |
-| `scope-violation`        | Files outside `allowedPaths` or inside `deniedPaths`                               |
-| `large-change`           | Changed-file, added-line, or deleted-line limits                                   |
+| Rule                     | Added or changed risk                                                            |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `secret-added`           | Common tokens, credential assignments, JWTs, and private-key headers             |
+| `test-disabled`          | `.skip`, `xit`, `xdescribe`, pytest skip markers, `@Disabled`, and similar forms |
+| `placeholder-added`      | `TODO`, `FIXME`, not-implemented exceptions/macros, and explicit stubs           |
+| `dependency-added`       | New declarations in npm, Python, Composer, Go, Cargo, and Bundler manifests      |
+| `sensitive-file-changed` | GitHub Actions, Dockerfiles, migrations, auth/permission files, and lockfiles    |
+| `scope-violation`        | Files outside `allowedPaths` or inside `deniedPaths`                             |
+| `large-change`           | Changed-file, added-line, or deleted-line limits                                 |
 
 Content rules inspect added lines where possible to reduce false positives.
 File-scope and size rules necessarily inspect change metadata. The checks are
 heuristics: review findings in context and keep specialized linters and security
 scanners in the toolchain.
+
+The dependency rule recognizes direct declarations in `package.json`,
+`requirements*.txt`/`.in`, `pyproject.toml`, `composer.json`, `go.mod`,
+`Cargo.toml`, and `Gemfile`. For an existing changed manifest, AgentGate obtains
+bounded full-file diff context from the same pinned Git snapshot, so a section
+header outside Git's normal three context lines cannot hide a declaration.
+Version-only changes, declaration reordering, and moves between dependency
+sections do not count as new names. This remains a manifest heuristic: it does
+not resolve dependency graphs or infer lockfile-only transitive changes.
 
 ## CLI
 

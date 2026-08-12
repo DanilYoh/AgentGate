@@ -349,6 +349,27 @@ export class GitClient {
     }
   }
 
+  public async assertFullContextDiffUnchanged(
+    snapshot: GitSnapshot,
+    paths: string[],
+    expectedPatch: string,
+    reservedBytes: number,
+  ): Promise<void> {
+    const actualPatch = await this.getFullContextDiff(
+      snapshot,
+      paths,
+      reservedBytes,
+    );
+    const digest = (value: string) =>
+      createHash("sha256").update(value).digest("hex");
+    if (digest(actualPatch) !== digest(expectedPatch)) {
+      throw new AgentGateError(
+        "A dependency manifest was modified while AgentGate was scanning; retry the check.",
+        { code: "SNAPSHOT_CHANGED" },
+      );
+    }
+  }
+
   public async resolveCommit(ref: string): Promise<string> {
     return (
       await this.run([
@@ -536,6 +557,51 @@ export class GitClient {
     if (Buffer.byteLength(patch) > this.gitOptions.maxDiffBytes) {
       throw new AgentGateError(
         `Git diff exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
+      );
+    }
+    return patch;
+  }
+
+  public async getFullContextDiff(
+    snapshot: GitSnapshot,
+    paths: string[],
+    reservedBytes = 0,
+  ): Promise<string> {
+    if (paths.length === 0) return "";
+    const root = await this.getRepositoryRoot();
+    const remainingBytes = this.gitOptions.maxDiffBytes - reservedBytes;
+    if (remainingBytes <= 0) {
+      throw new AgentGateError(
+        `Dependency manifest context exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
+      );
+    }
+    const common = [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--find-renames=50%",
+      "--ignore-submodules=none",
+      "--unified=2147483647",
+    ];
+    const literalPaths = [...new Set(paths)]
+      .sort((left, right) => left.localeCompare(right))
+      .map((path) => `:(literal)${path}`);
+    const args = snapshot.staged
+      ? [...common, "--cached", "--", ...literalPaths]
+      : snapshot.mergeBase
+        ? [...common, snapshot.mergeBase, "--", ...literalPaths]
+        : snapshot.head
+          ? [...common, snapshot.head, "--", ...literalPaths]
+          : [...common, "--cached", "--", ...literalPaths];
+    const patch = await this.run(args, root, [], remainingBytes);
+    if (Buffer.byteLength(patch) > remainingBytes) {
+      throw new AgentGateError(
+        `Dependency manifest context exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
         { code: "RESOURCE_LIMIT" },
       );
     }

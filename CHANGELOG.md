@@ -4,6 +4,9 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+- Scan bounded full context for existing dependency manifests, preventing
+  hunk-local misses, and recognize direct declarations for npm, Python,
+  Composer, Go, Cargo, and Bundler projects.
 - Add deterministic fuzz/property invariants for diff parsing, path matching,
   secret redaction, and terminal escaping, and enforce coverage floors in CI.
 - Prevent a rename from bypassing a rule exclusion when only its old or new path

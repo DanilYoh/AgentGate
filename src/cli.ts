@@ -9,6 +9,8 @@ import { scan } from "./engine.js";
 import { GitClient } from "./git/git-client.js";
 import type { GitSnapshot } from "./git/git-client.js";
 import { parseGitDiff } from "./git/diff-parser.js";
+import { isDependencyManifest } from "./rules/dependency-added.js";
+import { matchesPath } from "./path-match.js";
 import { formatReport } from "./reporters/index.js";
 import {
   formatJsonError,
@@ -134,6 +136,66 @@ function changesDefaultPolicy(patch: ReturnType<typeof parseGitDiff>): boolean {
   );
 }
 
+function filePaths(
+  file: ReturnType<typeof parseGitDiff>["files"][number],
+): string[] {
+  return [
+    ...new Set(
+      [file.oldPath, file.newPath, file.path].filter((path): path is string =>
+        Boolean(path),
+      ),
+    ),
+  ];
+}
+
+function dependencyManifestPaths(
+  patch: ReturnType<typeof parseGitDiff>,
+  excludePaths: string[],
+): string[] {
+  return [
+    ...new Set(
+      patch.files
+        .filter((file) => !file.isNew && !file.isDeleted)
+        .filter((file) => isDependencyManifest(file.path))
+        .filter(
+          (file) =>
+            !filePaths(file).every((path) => matchesPath(path, excludePaths)),
+        )
+        .flatMap(filePaths)
+        .filter(isDependencyManifest),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
+}
+
+function applyFullManifestContext(
+  patch: ReturnType<typeof parseGitDiff>,
+  fullContext: ReturnType<typeof parseGitDiff>,
+  requestedPaths: string[],
+): ReturnType<typeof parseGitDiff> {
+  const requested = new Set(requestedPaths);
+  const files = patch.files.map((file) => {
+    if (
+      file.isNew ||
+      file.isDeleted ||
+      !filePaths(file).some((path) => requested.has(path))
+    ) {
+      return file;
+    }
+    const paths = new Set(filePaths(file));
+    const replacement = fullContext.files.find((candidate) =>
+      filePaths(candidate).some((path) => paths.has(path)),
+    );
+    if (!replacement) {
+      throw new AgentGateError(
+        "Git did not return complete context for a changed dependency manifest.",
+        { code: "GIT_ERROR" },
+      );
+    }
+    return replacement;
+  });
+  return { ...patch, files };
+}
+
 async function loadTrustedConfig(
   git: GitClient,
   cwd: string,
@@ -195,16 +257,41 @@ export async function runCli(
     const config = await loadTrustedConfig(git, cwd, root, options, snapshot);
     git.configure(config.git);
     const sourcePatch = await git.getDiff(snapshot, config.untracked);
-    const patch = parseGitDiff(sourcePatch);
+    let patch = parseGitDiff(sourcePatch);
     if (!options.configPath && changesDefaultPolicy(patch)) {
       throw new AgentGateError(
         "The checked diff changes .agentgate.yml. Review policy changes separately, or pin an explicit trusted policy with --config and --config-sha256.",
         { code: "POLICY_ERROR" },
       );
     }
+    const manifestPaths =
+      config.rules["dependency-added"] === "off"
+        ? []
+        : dependencyManifestPaths(
+            patch,
+            config.ruleExcludePaths["dependency-added"],
+          );
+    const fullManifestSource = await git.getFullContextDiff(
+      snapshot,
+      manifestPaths,
+      Buffer.byteLength(sourcePatch),
+    );
+    if (manifestPaths.length > 0) {
+      patch = applyFullManifestContext(
+        patch,
+        parseGitDiff(fullManifestSource),
+        manifestPaths,
+      );
+    }
     const result = scan(patch, config);
     await git.assertSnapshotUnchanged(snapshot);
     await git.assertDiffUnchanged(snapshot, config.untracked, sourcePatch);
+    await git.assertFullContextDiffUnchanged(
+      snapshot,
+      manifestPaths,
+      fullManifestSource,
+      Buffer.byteLength(sourcePatch),
+    );
     io.stdout(formatReport(result, options.format));
     return result.blockingFindings > 0 ? 1 : 0;
   } catch (error) {

@@ -116,6 +116,107 @@ describe("Git and CLI integration", () => {
     );
   });
 
+  it.each([false, true])(
+    "finds a dependency declaration outside normal hunk context (staged=%s)",
+    async (staged) => {
+      const cwd = await repository();
+      const directory = join(cwd, "dir[1]");
+      await mkdir(directory);
+      const manifest = join(directory, "package.json");
+      const existing = Object.fromEntries(
+        Array.from({ length: 16 }, (_, index) => [`existing-${index}`, "1"]),
+      );
+      await writeFile(
+        manifest,
+        `${JSON.stringify({ dependencies: existing }, null, 2)}\n`,
+        "utf8",
+      );
+      git(cwd, ["add", "dir[1]/package.json"]);
+      git(cwd, ["commit", "--quiet", "-m", "add manifest"]);
+
+      const changed = {
+        dependencies: {
+          ...existing,
+          "new-runtime-package": "latest",
+        },
+      };
+      await writeFile(
+        manifest,
+        `${JSON.stringify(changed, null, 2)}\n`,
+        "utf8",
+      );
+      if (staged) git(cwd, ["add", "dir[1]/package.json"]);
+      const stdout: string[] = [];
+      const code = await runCli(
+        ["check", ...(staged ? ["--staged"] : []), "--format", "json"],
+        cwd,
+        {
+          stdout: (value) => stdout.push(value),
+          stderr: () => undefined,
+        },
+      );
+      const report = JSON.parse(stdout[0] ?? "") as {
+        findings: Array<{ ruleId: string; message: string }>;
+      };
+
+      expect(code).toBe(0);
+      const dependencyFinding = report.findings.find(
+        (finding) => finding.ruleId === "dependency-added",
+      );
+      expect(dependencyFinding?.message).toContain("new-runtime-package");
+    },
+  );
+
+  it("fails closed when full manifest context exceeds the diff budget", async () => {
+    const cwd = await repository();
+    const manifest = join(cwd, "package.json");
+    const existing = Object.fromEntries(
+      Array.from({ length: 80 }, (_, index) => [`existing-${index}`, "1"]),
+    );
+    await writeFile(
+      manifest,
+      `${JSON.stringify({ dependencies: existing }, null, 2)}\n`,
+      "utf8",
+    );
+    git(cwd, ["add", "package.json"]);
+    git(cwd, ["commit", "--quiet", "-m", "add large manifest"]);
+    await writeFile(
+      manifest,
+      `${JSON.stringify(
+        { dependencies: { ...existing, added: "1" } },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const policyDirectory = await mkdtemp(
+      join(tmpdir(), "agentgate-manifest-policy-"),
+    );
+    temporaryDirectories.push(policyDirectory);
+    const policy = join(policyDirectory, "policy.yml");
+    await writeFile(
+      policy,
+      "version: 1\ngit:\n  commandTimeoutMs: 5000\n  maxDiffBytes: 1024\n",
+      "utf8",
+    );
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(
+      ["check", "--format", "json", "--config", policy],
+      cwd,
+      {
+        stdout: (value) => stdout.push(value),
+        stderr: (value) => stderr.push(value),
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(stderr).toEqual([]);
+    expect(JSON.parse(stdout[0] ?? "")).toMatchObject({
+      error: { code: "RESOURCE_LIMIT" },
+    });
+  });
+
   it("includes repository-relative untracked files when invoked from a subdirectory", async () => {
     const cwd = await repository();
     const subdirectory = join(cwd, "sub");
