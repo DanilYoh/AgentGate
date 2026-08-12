@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "examples",
+    "schemas",
     "docs",
     "README.md",
     "LICENSE",
@@ -50,6 +51,7 @@
     "@types/node": "^26.2.0",
     "@types/sarif": "^2.1.7",
     "@vitest/coverage-v8": "^4.1.10",
+    "ajv": "^8.20.0",
     "eslint": "^10.8.1",
     "prettier": "^3.9.6",
     "typescript": "^6.0.3",

@@ -109,6 +109,14 @@ policy source are controlled by the operator. See the complete
 [threat model](docs/threat-model.md). Start from
 [`examples/.agentgate.yml`](examples/.agentgate.yml):
 
+The versioned [JSON Schema](schemas/agentgate-v1.schema.json) is shipped in the
+npm package for editor completion and independent policy validation. YAML
+language servers can opt in explicitly:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/DanilYoh/AgentGate/main/schemas/agentgate-v1.schema.json
+```
+
 ```yaml
 version: 1
 failOn: high

@@ -75,6 +75,22 @@ try {
     "dist",
     "cli.js",
   );
+  const schema = JSON.parse(
+    readFileSync(
+      join(
+        repository,
+        "node_modules",
+        "@danilyoh",
+        "agentgate",
+        "schemas",
+        "agentgate-v1.schema.json",
+      ),
+      "utf8",
+    ),
+  );
+  if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema") {
+    throw new Error("Packed policy schema is missing or has the wrong draft.");
+  }
   const result = spawnSync(
     process.execPath,
     [cli, "check", "--format", "json"],
