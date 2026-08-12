@@ -140,7 +140,7 @@ describe("reporters", () => {
       expect(output).toContain("REDACTED");
     }
     expect(text).toContain("Source: policy suppressions[0]");
-    expect(text).toContain("\\n\\u001b[31m");
+    expect(text).toContain("\\u001b[31m");
     expect(json.suppressedFindings[0]?.suppression?.source.location).toBe(
       "suppressions[0]",
     );

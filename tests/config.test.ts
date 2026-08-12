@@ -17,7 +17,9 @@ describe("configuration", () => {
     expect(() =>
       validateConfig({ version: 1, limits: { addedLines: -1 } }),
     ).toThrowError(
-      new AgentGateError("limits.addedLines must be a non-negative integer."),
+      new AgentGateError("limits.addedLines must be a non-negative integer.", {
+        code: "INVALID_CONFIG",
+      }),
     );
   });
 

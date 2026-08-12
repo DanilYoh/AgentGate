@@ -57,11 +57,22 @@ async function withTimeout<T>(
       operation,
       new Promise<T>((_resolve, reject) => {
         timer = setTimeout(
-          () => reject(new AgentGateError(`${description} timed out.`)),
+          () =>
+            reject(
+              new AgentGateError(`${description} timed out.`, {
+                code: "RESOURCE_LIMIT",
+              }),
+            ),
           timeoutMs,
         );
       }),
     ]);
+  } catch (error) {
+    if (error instanceof AgentGateError) throw error;
+    throw new AgentGateError(`${description} failed.`, {
+      cause: error,
+      code: "IO_ERROR",
+    });
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -79,11 +90,13 @@ async function readUntrackedFile(
   if (!stats.isFile()) {
     throw new AgentGateError(
       `Refusing to read non-regular untracked file ${path}.`,
+      { code: "IO_ERROR" },
     );
   }
   if (stats.size > options.maxFileBytes) {
     throw new AgentGateError(
       `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+      { code: "RESOURCE_LIMIT" },
     );
   }
 
@@ -101,11 +114,13 @@ async function readUntrackedFile(
     if (!openedStats.isFile()) {
       throw new AgentGateError(
         `Refusing to read non-regular untracked file ${path}.`,
+        { code: "IO_ERROR" },
       );
     }
     if (openedStats.size > options.maxFileBytes) {
       throw new AgentGateError(
         `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
       );
     }
 
@@ -123,6 +138,7 @@ async function readUntrackedFile(
     if (offset > options.maxFileBytes) {
       throw new AgentGateError(
         `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
       );
     }
     return buffer.subarray(0, offset).toString("utf8");
@@ -220,13 +236,13 @@ export class GitClient {
       if (candidate.killed || candidate.signal) {
         throw new AgentGateError(
           `Git command timed out after ${timeoutMs} milliseconds.`,
-          { cause: error },
+          { cause: error, code: "RESOURCE_LIMIT" },
         );
       }
       if (candidate.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
         throw new AgentGateError(
           `Git output exceeds the ${maxBuffer}-byte process limit.`,
-          { cause: error },
+          { cause: error, code: "RESOURCE_LIMIT" },
         );
       }
       const detail = candidate.stderr?.trim();
@@ -234,6 +250,7 @@ export class GitClient {
         detail ? `Git failed: ${detail}` : "Unable to run Git.",
         {
           cause: error,
+          code: "GIT_ERROR",
         },
       );
     }
@@ -245,7 +262,9 @@ export class GitClient {
       await this.run(["rev-parse", "--show-toplevel"], this.cwd)
     ).trim();
     if (!root)
-      throw new AgentGateError("Git returned an empty repository root.");
+      throw new AgentGateError("Git returned an empty repository root.", {
+        code: "GIT_ERROR",
+      });
     this.repositoryRoot = root;
     return root;
   }
@@ -270,14 +289,18 @@ export class GitClient {
     const head = await this.getHeadCommit();
     if (options.base) {
       if (!head) {
-        throw new AgentGateError("--base requires a repository with HEAD.");
+        throw new AgentGateError("--base requires a repository with HEAD.", {
+          code: "INVALID_ARGUMENT",
+        });
       }
       const baseCommit = await this.resolveCommit(options.base);
       const mergeBase = (
         await this.run(["merge-base", baseCommit, head])
       ).trim();
       if (!mergeBase) {
-        throw new AgentGateError("Git returned an empty merge base.");
+        throw new AgentGateError("Git returned an empty merge base.", {
+          code: "GIT_ERROR",
+        });
       }
       return {
         staged: false,
@@ -305,6 +328,7 @@ export class GitClient {
     ) {
       throw new AgentGateError(
         "Repository HEAD or index changed while AgentGate was scanning; retry the check.",
+        { code: "SNAPSHOT_CHANGED" },
       );
     }
   }
@@ -320,6 +344,7 @@ export class GitClient {
     if (digest(actualPatch) !== digest(expectedPatch)) {
       throw new AgentGateError(
         "Repository changes were modified while AgentGate was scanning; retry the check.",
+        { code: "SNAPSHOT_CHANGED" },
       );
     }
   }
@@ -339,7 +364,9 @@ export class GitClient {
     const commit = await this.resolveCommit(ref);
     const head = await this.getHeadCommit();
     if (!head) {
-      throw new AgentGateError("--base requires a repository with HEAD.");
+      throw new AgentGateError("--base requires a repository with HEAD.", {
+        code: "INVALID_ARGUMENT",
+      });
     }
     return (await this.run(["merge-base", commit, head])).trim();
   }
@@ -354,17 +381,22 @@ export class GitClient {
     ).trim();
     if (!type) return undefined;
     if (type !== "blob") {
-      throw new AgentGateError(`${path} at ${commit} is not a regular file.`);
+      throw new AgentGateError(`${path} at ${commit} is not a regular file.`, {
+        code: "POLICY_ERROR",
+      });
     }
     const size = Number(
       (await this.run(["cat-file", "-s", object], undefined, [], 1024)).trim(),
     );
     if (!Number.isSafeInteger(size) || size < 0) {
-      throw new AgentGateError(`Git returned an invalid size for ${path}.`);
+      throw new AgentGateError(`Git returned an invalid size for ${path}.`, {
+        code: "GIT_ERROR",
+      });
     }
     if (size > maximumPolicyBytes) {
       throw new AgentGateError(
         `${path} at ${commit} exceeds ${maximumPolicyBytes} bytes.`,
+        { code: "RESOURCE_LIMIT" },
       );
     }
     const source = await this.run(
@@ -376,6 +408,7 @@ export class GitClient {
     if (Buffer.byteLength(source) > maximumPolicyBytes) {
       throw new AgentGateError(
         `${path} at ${commit} exceeds ${maximumPolicyBytes} bytes.`,
+        { code: "RESOURCE_LIMIT" },
       );
     }
     return source;
@@ -420,12 +453,21 @@ export class GitClient {
         if (!ignored) {
           throw new AgentGateError(
             `Refusing to inspect non-regular repository path ${relativePath}.`,
+            { code: "IO_ERROR" },
           );
         }
       }
     };
 
-    await visit(root, "");
+    try {
+      await visit(root, "");
+    } catch (error) {
+      if (error instanceof AgentGateError) throw error;
+      throw new AgentGateError("Cannot inspect untracked repository paths.", {
+        cause: error,
+        code: "IO_ERROR",
+      });
+    }
   }
 
   private async includeUntracked(
@@ -441,6 +483,7 @@ export class GitClient {
     if (paths.length > options.maxFiles) {
       throw new AgentGateError(
         `Untracked files exceed the ${options.maxFiles}-file scan limit.`,
+        { code: "RESOURCE_LIMIT" },
       );
     }
     let result = patch;
@@ -464,12 +507,14 @@ export class GitClient {
       if (isSymbolicLink && contentBytes > options.maxSymlinkBytes) {
         throw new AgentGateError(
           `Untracked symlink ${path} exceeds the ${options.maxSymlinkBytes}-byte scan limit.`,
+          { code: "RESOURCE_LIMIT" },
         );
       }
       totalBytes += contentBytes;
       if (totalBytes > options.maxTotalBytes) {
         throw new AgentGateError(
           `Untracked files exceed the ${options.maxTotalBytes}-byte total scan limit.`,
+          { code: "RESOURCE_LIMIT" },
         );
       }
       result += syntheticUntrackedPatch(
@@ -480,6 +525,7 @@ export class GitClient {
       if (Buffer.byteLength(result) > this.gitOptions.maxDiffBytes) {
         throw new AgentGateError(
           `Git diff exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+          { code: "RESOURCE_LIMIT" },
         );
       }
     }
@@ -490,6 +536,7 @@ export class GitClient {
     if (Buffer.byteLength(patch) > this.gitOptions.maxDiffBytes) {
       throw new AgentGateError(
         `Git diff exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
       );
     }
     return patch;

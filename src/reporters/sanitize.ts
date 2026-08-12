@@ -1,4 +1,8 @@
-import { redactSecrets, safeEvidence } from "../security/redact.js";
+import {
+  redactSecrets,
+  safeEvidence,
+  safeTextFragment,
+} from "../security/redact.js";
 import type { Finding, SuppressedFinding } from "../types.js";
 
 export function sanitizeFinding(finding: Finding): Finding {
@@ -19,10 +23,10 @@ export function sanitizeSuppressedFinding(
   return {
     ...sanitized,
     suppression: {
-      reason: redactSecrets(finding.suppression.reason),
+      reason: safeTextFragment(safeEvidence(finding.suppression.reason, 240)),
       source: {
         kind: "policy",
-        location: redactSecrets(finding.suppression.source.location),
+        location: safeTextFragment(finding.suppression.source.location),
       },
     },
   };

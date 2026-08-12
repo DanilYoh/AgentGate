@@ -377,6 +377,25 @@ describe("Git and CLI integration", () => {
     expect(errors[0]).toContain("Git failed");
   });
 
+  it("returns a structured Git error outside a repository", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agentgate-nongit-json-"));
+    temporaryDirectories.push(cwd);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(["check", "--format", "json"], cwd, {
+      stdout: (value) => stdout.push(value),
+      stderr: (value) => stderr.push(value),
+    });
+
+    expect(code).toBe(2);
+    expect(stderr).toEqual([]);
+    expect(JSON.parse(stdout[0] ?? "")).toMatchObject({
+      status: "error",
+      exitCode: 2,
+      error: { code: "GIT_ERROR" },
+    });
+  });
+
   it("returns 2 for an invalid explicit configuration", async () => {
     const cwd = await repository();
     const source = "version: 2\n";
@@ -393,6 +412,74 @@ describe("Git and CLI integration", () => {
     );
     expect(code).toBe(2);
     expect(errors[0]).toContain("Configuration version must be 1");
+  });
+
+  it("returns a structured invalid-configuration error", async () => {
+    const cwd = await repository();
+    const source = "version: 2\n";
+    await writeFile(join(cwd, "bad.yml"), source, "utf8");
+    const digest = createHash("sha256").update(source).digest("hex");
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(
+      [
+        "check",
+        "--format",
+        "json",
+        "--config",
+        "bad.yml",
+        "--config-sha256",
+        digest,
+      ],
+      cwd,
+      {
+        stdout: (value) => stdout.push(value),
+        stderr: (value) => stderr.push(value),
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(stderr).toEqual([]);
+    const report = JSON.parse(stdout[0] ?? "") as {
+      error: { code: string; message: string };
+    };
+    expect(report.error.code).toBe("INVALID_CONFIG");
+    expect(report.error.message).toContain("Configuration version must be 1");
+  });
+
+  it("returns a structured resource-limit error", async () => {
+    const cwd = await repository();
+    await writeFile(
+      join(cwd, "app.js"),
+      `export const value = "${"x".repeat(512)}";\n`,
+      "utf8",
+    );
+    const policyDirectory = await mkdtemp(
+      join(tmpdir(), "agentgate-limit-policy-"),
+    );
+    temporaryDirectories.push(policyDirectory);
+    const policy = join(policyDirectory, "policy.yml");
+    await writeFile(
+      policy,
+      "version: 1\ngit:\n  commandTimeoutMs: 5000\n  maxDiffBytes: 128\n",
+      "utf8",
+    );
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(
+      ["check", "--format", "json", "--config", policy],
+      cwd,
+      {
+        stdout: (value) => stdout.push(value),
+        stderr: (value) => stderr.push(value),
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(stderr).toEqual([]);
+    expect(JSON.parse(stdout[0] ?? "")).toMatchObject({
+      error: { code: "RESOURCE_LIMIT" },
+    });
   });
 
   it("rejects an unpinned policy from inside the checked repository", async () => {

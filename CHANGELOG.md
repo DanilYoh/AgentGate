@@ -4,6 +4,9 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+- Emit sanitized, structured exit-code 2 reports on stdout for JSON and SARIF,
+  with stable error categories and a published JSON report schema. Text errors
+  remain on stderr.
 - Include redacted suppression reasons and their deterministic policy-list
   source in text, JSON, and SARIF reports without treating suppressed findings
   as active SARIF results.

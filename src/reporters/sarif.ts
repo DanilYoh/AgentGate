@@ -69,6 +69,7 @@ export function formatSarif(result: ScanResult): string {
           blockingFindings: result.blockingFindings,
           suppressedFindings: result.summary.suppressedFindings,
           agentGate: {
+            reportVersion: 1,
             suppressedFindings,
           },
         },

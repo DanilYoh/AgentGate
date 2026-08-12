@@ -32,7 +32,7 @@ export function formatText(result: ScanResult): string {
       );
       if (item.suppression) {
         lines.push(
-          `    Reason: ${safeTextFragment(item.suppression.reason)}`,
+          `    Reason: ${safeTextFragment(safeEvidence(item.suppression.reason, 240))}`,
           `    Source: ${safeTextFragment(item.suppression.source.kind)} ${safeTextFragment(item.suppression.source.location)}`,
         );
       }

@@ -206,6 +206,15 @@ SARIF serialization, so redaction cannot corrupt the serialized document. Avoid
 sharing raw diffs: a scanner can reduce exposure in its own output but cannot
 remove a committed secret from Git history.
 
+The stable JSON v1 contract is published as
+[`schemas/agentgate-report-v1.schema.json`](schemas/agentgate-report-v1.schema.json).
+With `--format json` or `--format sarif`, exit-code `2` failures are also
+emitted as a single sanitized document on stdout and stderr stays empty. JSON
+errors carry a stable category such as `INVALID_CONFIG`, `GIT_ERROR`, or
+`RESOURCE_LIMIT`; SARIF errors use a failed invocation and no active results.
+Text-mode errors continue to use stderr. Callers must block both exit codes `1`
+and `2`.
+
 ## Hooks and CI
 
 With Husky, put this in `.husky/pre-commit`:

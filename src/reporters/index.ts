@@ -15,6 +15,8 @@ export function formatReport(result: ScanResult, format: OutputFormat): string {
     case "sarif":
       return formatSarif(result);
     default:
-      throw new AgentGateError(`Unsupported report format: ${String(format)}`);
+      throw new AgentGateError(`Unsupported report format: ${String(format)}`, {
+        code: "INVALID_ARGUMENT",
+      });
   }
 }
