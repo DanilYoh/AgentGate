@@ -51,6 +51,36 @@ describe("scan thresholds", () => {
     );
     expect(result.findings).toEqual([]);
     expect(result.suppressedFindings).toHaveLength(1);
+    expect(result.suppressedFindings[0]?.suppression).toEqual({
+      reason: "Generated compatibility stub",
+      source: { kind: "policy", location: "suppressions[0]" },
+    });
     expect(result.summary.suppressedFindings).toBe(1);
+  });
+
+  it("records the first matching suppression deterministically", () => {
+    const result = scan(
+      addedFile("src/generated.ts", ["// TODO: generated stub"]),
+      config({
+        suppressions: [
+          {
+            ruleId: "placeholder-added",
+            path: "src/**",
+            reason: "Approved generated sources",
+          },
+          {
+            ruleId: "placeholder-added",
+            path: "src/generated.ts",
+            reason: "Second matching entry",
+          },
+        ],
+      }),
+      [placeholderAddedRule],
+    );
+
+    expect(result.suppressedFindings[0]?.suppression).toEqual({
+      reason: "Approved generated sources",
+      source: { kind: "policy", location: "suppressions[0]" },
+    });
   });
 });

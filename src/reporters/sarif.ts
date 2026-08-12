@@ -2,7 +2,7 @@ import { safeEvidence } from "../security/redact.js";
 import type { Finding, ScanResult, Severity } from "../types.js";
 import type { Location, Log } from "sarif";
 import { agentGateVersion } from "../version.js";
-import { sanitizeFinding } from "./sanitize.js";
+import { sanitizeFinding, sanitizeSuppressedFinding } from "./sanitize.js";
 
 function sarifLevel(severity: Severity): "error" | "warning" | "note" {
   if (severity === "critical" || severity === "high") return "error";
@@ -29,6 +29,9 @@ function location(finding: Finding): Location {
 
 export function formatSarif(result: ScanResult): string {
   const findings = result.findings.map(sanitizeFinding);
+  const suppressedFindings = result.suppressedFindings.map(
+    sanitizeSuppressedFinding,
+  );
   const firstByRule = new Map(findings.map((item) => [item.ruleId, item]));
   const descriptors = [...firstByRule.values()];
   const ruleIndexes = new Map(
@@ -65,6 +68,9 @@ export function formatSarif(result: ScanResult): string {
         properties: {
           blockingFindings: result.blockingFindings,
           suppressedFindings: result.summary.suppressedFindings,
+          agentGate: {
+            suppressedFindings,
+          },
         },
       },
     ],

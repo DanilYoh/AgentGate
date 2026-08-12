@@ -168,7 +168,10 @@ concise policy files, `warning` maps to `medium` and `error` maps to `high`.
 empty `allowedPaths` permits every path; `deniedPaths` always takes precedence.
 Each rule also accepts `{ level, excludePaths }`. Suppressions require a rule,
 path, reason, and optional exact line; suppressed findings are counted
-separately in reports.
+separately in reports. Reports include the matching suppression reason and its
+policy-list location so each exception remains auditable; SARIF keeps these
+details in `run.properties.agentGate.suppressedFindings`, outside active
+`results`.
 
 Configuration is validated before reporting. Unknown keys, invalid path-list
 types, negative limits, unsupported versions, and unknown rules return exit code

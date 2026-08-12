@@ -1,5 +1,5 @@
 import type { ScanResult } from "../types.js";
-import { sanitizeFinding } from "./sanitize.js";
+import { sanitizeFinding, sanitizeSuppressedFinding } from "./sanitize.js";
 
 export function formatJson(result: ScanResult): string {
   const report = {
@@ -7,7 +7,9 @@ export function formatJson(result: ScanResult): string {
     summary: result.summary,
     blockingFindings: result.blockingFindings,
     findings: result.findings.map(sanitizeFinding),
-    suppressedFindings: result.suppressedFindings.map(sanitizeFinding),
+    suppressedFindings: result.suppressedFindings.map(
+      sanitizeSuppressedFinding,
+    ),
   };
   return JSON.stringify(report, null, 2);
 }

@@ -4,6 +4,10 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+- Include redacted suppression reasons and their deterministic policy-list
+  source in text, JSON, and SARIF reports without treating suppressed findings
+  as active SARIF results.
+
 ### Security
 
 - Load automatic policy from a trusted Git snapshot, support protected policy
