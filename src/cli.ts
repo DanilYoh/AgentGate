@@ -19,6 +19,9 @@ import {
   toReportedError,
 } from "./reporters/error.js";
 import { agentGateVersion } from "./version.js";
+import { initializePolicy } from "./commands/init.js";
+import { validatePolicy } from "./commands/validate-config.js";
+import { explainRules } from "./commands/explain.js";
 import type { OutputFormat } from "./reporters/index.js";
 
 export interface CliIo {
@@ -31,7 +34,8 @@ const defaultIo: CliIo = {
   stderr: (value) => console.error(value),
 };
 
-interface CliOptions {
+interface CheckOptions {
+  command: "check";
   staged: boolean;
   format: OutputFormat;
   base?: string;
@@ -40,8 +44,25 @@ interface CliOptions {
   policyRef?: string;
 }
 
+interface InitOptions {
+  command: "init";
+}
+
+interface ValidateOptions {
+  command: "validate-config";
+  configPath?: string;
+  configSha256?: string;
+}
+
+interface ExplainOptions {
+  command: "explain";
+  ruleId?: string;
+}
+
+type CliOptions = CheckOptions | InitOptions | ValidateOptions | ExplainOptions;
+
 function usage(): string {
-  return `Usage: agentgate check [options]\n\nOptions:\n  --staged                  Check staged changes only\n  --base <ref>               Compare the merge base of <ref> and HEAD\n  --format <format>          Output text, json, or sarif (default: text)\n  --policy-ref <ref>         Read .agentgate.yml from a trusted Git ref\n  --config <path>            Read an explicit external YAML policy\n  --config-sha256 <sha256>   Require the exact explicit policy content\n  -h, --help                 Show help\n  -v, --version              Show version`;
+  return `Usage: agentgate <command> [options]\n\nCommands:\n  check                       Inspect a Git change against policy\n  init                        Create .agentgate.yml without overwriting\n  validate-config             Validate a policy and print its SHA-256\n  explain [rule-id]           Describe all rules or one rule\n\nCheck options:\n  --staged                    Check staged changes only\n  --base <ref>                Compare the merge base of <ref> and HEAD\n  --format <format>           Output text, json, or sarif (default: text)\n  --policy-ref <ref>          Read .agentgate.yml from a trusted Git ref\n  --config <path>             Read an explicit external YAML policy\n  --config-sha256 <sha256>    Require the exact explicit policy content\n\nValidate-config options:\n  --config <path>             Validate an explicit policy path\n  --config-sha256 <sha256>    Require the exact explicit policy content\n\nGlobal options:\n  -h, --help                  Show help\n  -v, --version               Show version`;
 }
 
 function invalidArgument(message: string): AgentGateError {
@@ -61,13 +82,22 @@ function requestedErrorFormat(args: string[]): "json" | "sarif" | undefined {
   return format;
 }
 
-function parseArgs(args: string[]): CliOptions | "help" | "version" {
-  if (args.includes("--help") || args.includes("-h")) return "help";
-  if (args.includes("--version") || args.includes("-v")) return "version";
-  if (args[0] !== "check")
-    throw invalidArgument("Expected the `check` command.");
-  const options: CliOptions = { staged: false, format: "text" };
-  for (let index = 1; index < args.length; index += 1) {
+function parseDigest(value: string | undefined): string {
+  if (!value || !/^[a-f0-9]{64}$/iu.test(value)) {
+    throw invalidArgument(
+      "--config-sha256 requires a 64-character hexadecimal digest.",
+    );
+  }
+  return value.toLowerCase();
+}
+
+function parseCheckArgs(args: string[]): CheckOptions {
+  const options: CheckOptions = {
+    command: "check",
+    staged: false,
+    format: "text",
+  };
+  for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--staged") options.staged = true;
     else if (argument === "--base") {
@@ -85,13 +115,7 @@ function parseArgs(args: string[]): CliOptions | "help" | "version" {
       if (!value) throw invalidArgument("--config requires a path.");
       options.configPath = value;
     } else if (argument === "--config-sha256") {
-      const value = args[++index];
-      if (!value || !/^[a-f0-9]{64}$/iu.test(value)) {
-        throw invalidArgument(
-          "--config-sha256 requires a 64-character hexadecimal digest.",
-        );
-      }
-      options.configSha256 = value.toLowerCase();
+      options.configSha256 = parseDigest(args[++index]);
     } else if (argument === "--policy-ref") {
       const value = args[++index];
       if (!value) throw invalidArgument("--policy-ref requires a Git ref.");
@@ -107,6 +131,47 @@ function parseArgs(args: string[]): CliOptions | "help" | "version" {
     throw invalidArgument("--config-sha256 requires --config.");
   }
   return options;
+}
+
+function parseValidateArgs(args: string[]): ValidateOptions {
+  const options: ValidateOptions = { command: "validate-config" };
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--config") {
+      const value = args[++index];
+      if (!value) throw invalidArgument("--config requires a path.");
+      options.configPath = value;
+    } else if (argument === "--config-sha256") {
+      options.configSha256 = parseDigest(args[++index]);
+    } else throw invalidArgument(`Unknown option: ${argument}`);
+  }
+  if (options.configSha256 && !options.configPath) {
+    throw invalidArgument("--config-sha256 requires --config.");
+  }
+  return options;
+}
+
+function parseArgs(args: string[]): CliOptions | "help" | "version" {
+  if (args.includes("--help") || args.includes("-h")) return "help";
+  if (args.includes("--version") || args.includes("-v")) return "version";
+  const [command, ...rest] = args;
+  if (command === "check") return parseCheckArgs(rest);
+  if (command === "init") {
+    if (rest.length > 0) throw invalidArgument(`Unknown option: ${rest[0]}`);
+    return { command: "init" };
+  }
+  if (command === "validate-config") return parseValidateArgs(rest);
+  if (command === "explain") {
+    if (rest.length > 1)
+      throw invalidArgument("explain accepts at most one rule ID.");
+    return {
+      command: "explain",
+      ...(rest[0] === undefined ? {} : { ruleId: rest[0] }),
+    };
+  }
+  throw invalidArgument(
+    "Expected one of these commands: check, init, validate-config, explain.",
+  );
 }
 
 async function isInside(root: string, path: string): Promise<boolean> {
@@ -200,7 +265,7 @@ async function loadTrustedConfig(
   git: GitClient,
   cwd: string,
   root: string,
-  options: CliOptions,
+  options: CheckOptions,
   snapshot: GitSnapshot,
 ) {
   if (options.configPath) {
@@ -249,6 +314,27 @@ export async function runCli(
     }
     if (options === "version") {
       io.stdout(agentGateVersion);
+      return 0;
+    }
+    if (options.command === "init") {
+      io.stdout(await initializePolicy(cwd));
+      return 0;
+    }
+    if (options.command === "validate-config") {
+      io.stdout(
+        await validatePolicy(cwd, {
+          ...(options.configPath === undefined
+            ? {}
+            : { configPath: options.configPath }),
+          ...(options.configSha256 === undefined
+            ? {}
+            : { configSha256: options.configSha256 }),
+        }),
+      );
+      return 0;
+    }
+    if (options.command === "explain") {
+      io.stdout(explainRules(options.ruleId));
       return 0;
     }
     const git = new GitClient(cwd);

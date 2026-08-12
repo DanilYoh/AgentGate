@@ -22,7 +22,7 @@ describe("CLI argument handling", () => {
   it("returns 0 for help without requiring a repository", async () => {
     const output = capture();
     expect(await runCli(["--help"], process.cwd(), output.io)).toBe(0);
-    expect(output.stdout[0]).toContain("Usage: agentgate check");
+    expect(output.stdout[0]).toContain("Usage: agentgate <command>");
   });
 
   it("returns 0 for version", async () => {
@@ -32,8 +32,8 @@ describe("CLI argument handling", () => {
   });
 
   it.each([
-    [[], "Expected the `check` command"],
-    [["unknown"], "Expected the `check` command"],
+    [[], "Expected one of these commands"],
+    [["unknown"], "Expected one of these commands"],
     [["check", "--staged", "--base", "HEAD"], "cannot be used together"],
     [["check", "--format", "xml"], "--format must be one of"],
     [["check", "--config"], "--config requires a path"],

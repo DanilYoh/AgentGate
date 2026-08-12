@@ -4,6 +4,8 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+- Add safe `init`, `validate-config`, and `explain` commands, plus a single rule
+  metadata registry shared by CLI explanations and SARIF descriptors.
 - Scan bounded full context for existing dependency manifests, preventing
   hunk-local misses, and recognize direct declarations for npm, Python,
   Composer, Go, Cargo, and Bundler projects.

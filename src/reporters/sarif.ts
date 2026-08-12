@@ -2,6 +2,7 @@ import { safeEvidence } from "../security/redact.js";
 import type { Finding, ScanResult, Severity } from "../types.js";
 import type { Location, Log } from "sarif";
 import { agentGateVersion } from "../version.js";
+import { metadataForRule } from "../rules/metadata.js";
 import { sanitizeFinding, sanitizeSuppressedFinding } from "./sanitize.js";
 
 function sarifLevel(severity: Severity): "error" | "warning" | "note" {
@@ -46,13 +47,19 @@ export function formatSarif(result: ScanResult): string {
           driver: {
             name: "AgentGate",
             semanticVersion: agentGateVersion,
-            rules: descriptors.map((item) => ({
-              id: item.ruleId,
-              shortDescription: { text: item.message },
-              help: { text: item.recommendation },
-              defaultConfiguration: { level: sarifLevel(item.severity) },
-              properties: { severity: item.severity },
-            })),
+            rules: descriptors.map((item) => {
+              const metadata = metadataForRule(item.ruleId);
+              return {
+                id: item.ruleId,
+                shortDescription: { text: metadata.description },
+                fullDescription: { text: metadata.inspection },
+                help: {
+                  text: `${metadata.recommendation} Limitation: ${metadata.limitations}`,
+                },
+                defaultConfiguration: { level: sarifLevel(item.severity) },
+                properties: { severity: item.severity },
+              };
+            }),
           },
         },
         results: findings.map((item) => ({

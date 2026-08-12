@@ -5,10 +5,10 @@ such as Codex, Claude Code, and Cursor. One command inspects the current Git
 diff for added secrets, disabled tests, unfinished placeholders, new
 dependencies, sensitive files, scope violations, and unexpectedly large changes.
 
-It is deterministic, read-only, and runs entirely on your machine. It sends no
-source code or statistics over the network, has no telemetry, and uses no LLM or
-API key. AgentGate is a focused diff-policy check, not a general AI code
-reviewer.
+The `check` command is deterministic and read-only, and every command runs
+entirely on your machine. AgentGate sends no source code or statistics over the
+network, has no telemetry, and uses no LLM or API key. It is a focused
+diff-policy check, not a general AI code reviewer.
 
 ## Quick start
 
@@ -17,6 +17,8 @@ package in the repository, then run its local binary without network fallback:
 
 ```console
 npm install --save-dev @danilyoh/agentgate
+npm exec --offline -- agentgate init
+# Review and commit .agentgate.yml, then:
 npm exec --offline -- agentgate check
 ```
 
@@ -80,6 +82,11 @@ not resolve dependency graphs or infer lockfile-only transitive changes.
 ## CLI
 
 ```console
+agentgate init
+agentgate validate-config
+agentgate validate-config --config /protected/agentgate.yml
+agentgate explain
+agentgate explain secret-added
 agentgate check
 agentgate check --staged
 agentgate check --base main
@@ -90,6 +97,16 @@ agentgate check --policy-ref origin/main
 agentgate check --config /protected/agentgate.yml
 agentgate check --config /protected/agentgate.yml --config-sha256 <sha256>
 ```
+
+- `init` creates the canonical starter `.agentgate.yml` at the Git repository
+  root. It uses exclusive creation and never replaces a file, directory, or
+  symlink; review and commit the new policy before relying on it.
+- `validate-config` strictly validates the root policy, or an explicit
+  `--config`, and prints the SHA-256 of the exact source bytes for pinning. It
+  does not scan a diff, and an explicit path works outside Git.
+- `explain` lists every rule and default level. With a rule ID, it also shows
+  inspected input, heuristic limitations, and remediation without requiring a
+  repository.
 
 - The default mode checks staged and unstaged tracked changes against `HEAD`,
   plus untracked text files not ignored by Git.

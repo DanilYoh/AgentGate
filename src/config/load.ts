@@ -278,11 +278,17 @@ export function parseConfig(source: string, location: string): AgentGateConfig {
   }
 }
 
-export async function loadConfig(
+export interface LoadedConfig {
+  config: AgentGateConfig;
+  path: string;
+  sha256: string;
+}
+
+export async function loadConfigWithMetadata(
   cwd: string,
   requestedPath: string,
   expectedSha256?: string,
-): Promise<AgentGateConfig> {
+): Promise<LoadedConfig> {
   const path = isAbsolute(requestedPath)
     ? requestedPath
     : resolve(cwd, requestedPath);
@@ -316,14 +322,27 @@ export async function loadConfig(
       { code: "RESOURCE_LIMIT" },
     );
   }
+  const sha256 = createHash("sha256").update(source).digest("hex");
   if (expectedSha256) {
-    const actual = createHash("sha256").update(source).digest("hex");
-    if (actual !== expectedSha256.toLowerCase()) {
+    if (sha256 !== expectedSha256.toLowerCase()) {
       throw new AgentGateError(
-        `Configuration SHA-256 mismatch at ${path}: expected ${expectedSha256.toLowerCase()}, got ${actual}.`,
+        `Configuration SHA-256 mismatch at ${path}: expected ${expectedSha256.toLowerCase()}, got ${sha256}.`,
         { code: "POLICY_HASH_MISMATCH" },
       );
     }
   }
-  return parseConfig(source.toString("utf8"), path);
+  return {
+    config: parseConfig(source.toString("utf8"), path),
+    path,
+    sha256,
+  };
+}
+
+export async function loadConfig(
+  cwd: string,
+  requestedPath: string,
+  expectedSha256?: string,
+): Promise<AgentGateConfig> {
+  return (await loadConfigWithMetadata(cwd, requestedPath, expectedSha256))
+    .config;
 }

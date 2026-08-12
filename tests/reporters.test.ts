@@ -3,6 +3,7 @@ import { scan } from "../src/engine.js";
 import { formatJson } from "../src/reporters/json.js";
 import { formatSarif } from "../src/reporters/sarif.js";
 import { formatText } from "../src/reporters/text.js";
+import { metadataForRule } from "../src/rules/metadata.js";
 import { addedFile, config, riskySyntheticSecret } from "./fixtures.js";
 
 describe("reporters", () => {
@@ -46,7 +47,12 @@ describe("reporters", () => {
     const report = JSON.parse(formatSarif(result)) as {
       version: string;
       runs: Array<{
-        tool: { driver: { name: string } };
+        tool: {
+          driver: {
+            name: string;
+            rules: Array<{ shortDescription: { text: string } }>;
+          };
+        };
         results: unknown[];
         properties: { suppressedFindings: number };
       }>;
@@ -54,6 +60,9 @@ describe("reporters", () => {
     expect(report.version).toBe("2.1.0");
     expect(report.runs).toHaveLength(1);
     expect(report.runs[0]?.tool.driver.name).toBe("AgentGate");
+    expect(report.runs[0]?.tool.driver.rules[0]?.shortDescription.text).toBe(
+      metadataForRule("secret-added").description,
+    );
     expect(report.runs[0]?.results).toHaveLength(1);
     expect(report.runs[0]?.properties.suppressedFindings).toBe(0);
   });
