@@ -1,0 +1,4 @@
+pre-commit:
+  commands:
+    agentgate:
+      run: npm exec --offline -- agentgate check --staged

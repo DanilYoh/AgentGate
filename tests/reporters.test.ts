@@ -3,6 +3,7 @@ import { scan } from "../src/engine.js";
 import { formatJson } from "../src/reporters/json.js";
 import { formatSarif } from "../src/reporters/sarif.js";
 import { formatText } from "../src/reporters/text.js";
+import { metadataForRule } from "../src/rules/metadata.js";
 import { addedFile, config, riskySyntheticSecret } from "./fixtures.js";
 
 describe("reporters", () => {
@@ -46,7 +47,12 @@ describe("reporters", () => {
     const report = JSON.parse(formatSarif(result)) as {
       version: string;
       runs: Array<{
-        tool: { driver: { name: string } };
+        tool: {
+          driver: {
+            name: string;
+            rules: Array<{ shortDescription: { text: string } }>;
+          };
+        };
         results: unknown[];
         properties: { suppressedFindings: number };
       }>;
@@ -54,6 +60,9 @@ describe("reporters", () => {
     expect(report.version).toBe("2.1.0");
     expect(report.runs).toHaveLength(1);
     expect(report.runs[0]?.tool.driver.name).toBe("AgentGate");
+    expect(report.runs[0]?.tool.driver.rules[0]?.shortDescription.text).toBe(
+      metadataForRule("secret-added").description,
+    );
     expect(report.runs[0]?.results).toHaveLength(1);
     expect(report.runs[0]?.properties.suppressedFindings).toBe(0);
   });
@@ -103,6 +112,51 @@ describe("reporters", () => {
     const output = formatText(unsafe);
     expect(output).toContain("src/line\\nbreak\\u001b[31m.ts");
     expect(output).not.toContain("\u001b");
+  });
+
+  it("reports audited suppression metadata without leaking its content", () => {
+    const suppressed = scan(
+      addedFile("src/generated.ts", ["// TODO: generated stub"]),
+      config({
+        suppressions: [
+          {
+            ruleId: "placeholder-added",
+            path: "src/generated.ts",
+            line: 1,
+            reason: `Approved with token = "${riskySyntheticSecret}"\n\u001b[31m`,
+          },
+        ],
+      }),
+    );
+
+    const text = formatText(suppressed);
+    const json = JSON.parse(formatJson(suppressed)) as {
+      suppressedFindings: Array<{
+        suppression?: { reason: string; source: { location: string } };
+      }>;
+    };
+    const sarif = JSON.parse(formatSarif(suppressed)) as {
+      runs: Array<{
+        results: unknown[];
+        properties: {
+          agentGate: { suppressedFindings: unknown[] };
+        };
+      }>;
+    };
+
+    for (const output of [text, JSON.stringify(json), JSON.stringify(sarif)]) {
+      expect(output).not.toContain(riskySyntheticSecret);
+      expect(output).toContain("REDACTED");
+    }
+    expect(text).toContain("Source: policy suppressions[0]");
+    expect(text).toContain("\\u001b[31m");
+    expect(json.suppressedFindings[0]?.suppression?.source.location).toBe(
+      "suppressions[0]",
+    );
+    expect(sarif.runs[0]?.results).toEqual([]);
+    expect(sarif.runs[0]?.properties.agentGate.suppressedFindings).toHaveLength(
+      1,
+    );
   });
 
   it.each([

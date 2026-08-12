@@ -4,12 +4,42 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+## 1.0.0 - 2026-08-12
+
+### Added
+
+- Add a verified release workflow with immutable Action dependencies, token-free
+  npm OIDC publishing, a separately validated tarball, code owners, and
+  documented bootstrap and security processes.
+- Add a self-contained Node.js 24 GitHub Action with immutable head, base, and
+  policy inputs, protected report files, a reproducible committed bundle, and
+  isolated bundle verification without `node_modules`.
+- Ship tested, offline hook templates for Husky, Lefthook, and pre-commit.
+- Add safe `init`, `validate-config`, and `explain` commands, plus a single rule
+  metadata registry shared by CLI explanations and SARIF descriptors.
+- Scan bounded full context for existing dependency manifests, preventing
+  hunk-local misses, and recognize direct declarations for npm, Python,
+  Composer, Go, Cargo, and Bundler projects.
+- Add deterministic fuzz/property invariants for diff parsing, path matching,
+  secret redaction, and terminal escaping, and enforce coverage floors in CI.
+- Prevent a rename from bypassing a rule exclusion when only its old or new path
+  is excluded; all paths must now match before the file is skipped.
+- Emit sanitized, structured exit-code 2 reports on stdout for JSON and SARIF,
+  with stable error categories and a published JSON report schema. Text errors
+  remain on stderr.
+- Include redacted suppression reasons and their deterministic policy-list
+  source in text, JSON, and SARIF reports without treating suppressed findings
+  as active SARIF results.
+
 ### Security
 
 - Load automatic policy from a trusted Git snapshot, support protected policy
   refs and SHA-256-pinned external policy, and fail closed on mutable policy.
 - Bound and time-limit untracked-file reads and reject special files.
 - Redact individual JSON and SARIF fields before serialization.
+- Pin each scan to one resolved commit/index snapshot, reject concurrent
+  mutations, and bound Git execution, diff size, untracked count, and symlink
+  targets.
 
 ### Changed
 

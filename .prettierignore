@@ -1,4 +1,5 @@
 dist
+action/dist
 coverage
 *.tgz
 package-lock.json

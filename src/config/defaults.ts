@@ -29,8 +29,14 @@ export const defaultConfig: AgentGateConfig = {
     "large-change": [],
   },
   suppressions: [],
+  git: {
+    commandTimeoutMs: 30_000,
+    maxDiffBytes: 50 * 1024 * 1024,
+  },
   untracked: {
+    maxFiles: 10_000,
     maxFileBytes: 1024 * 1024,
+    maxSymlinkBytes: 4 * 1024,
     maxTotalBytes: 8 * 1024 * 1024,
     readTimeoutMs: 2_000,
   },

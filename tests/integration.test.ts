@@ -116,6 +116,107 @@ describe("Git and CLI integration", () => {
     );
   });
 
+  it.each([false, true])(
+    "finds a dependency declaration outside normal hunk context (staged=%s)",
+    async (staged) => {
+      const cwd = await repository();
+      const directory = join(cwd, "dir[1]");
+      await mkdir(directory);
+      const manifest = join(directory, "package.json");
+      const existing = Object.fromEntries(
+        Array.from({ length: 16 }, (_, index) => [`existing-${index}`, "1"]),
+      );
+      await writeFile(
+        manifest,
+        `${JSON.stringify({ dependencies: existing }, null, 2)}\n`,
+        "utf8",
+      );
+      git(cwd, ["add", "dir[1]/package.json"]);
+      git(cwd, ["commit", "--quiet", "-m", "add manifest"]);
+
+      const changed = {
+        dependencies: {
+          ...existing,
+          "new-runtime-package": "latest",
+        },
+      };
+      await writeFile(
+        manifest,
+        `${JSON.stringify(changed, null, 2)}\n`,
+        "utf8",
+      );
+      if (staged) git(cwd, ["add", "dir[1]/package.json"]);
+      const stdout: string[] = [];
+      const code = await runCli(
+        ["check", ...(staged ? ["--staged"] : []), "--format", "json"],
+        cwd,
+        {
+          stdout: (value) => stdout.push(value),
+          stderr: () => undefined,
+        },
+      );
+      const report = JSON.parse(stdout[0] ?? "") as {
+        findings: Array<{ ruleId: string; message: string }>;
+      };
+
+      expect(code).toBe(0);
+      const dependencyFinding = report.findings.find(
+        (finding) => finding.ruleId === "dependency-added",
+      );
+      expect(dependencyFinding?.message).toContain("new-runtime-package");
+    },
+  );
+
+  it("fails closed when full manifest context exceeds the diff budget", async () => {
+    const cwd = await repository();
+    const manifest = join(cwd, "package.json");
+    const existing = Object.fromEntries(
+      Array.from({ length: 80 }, (_, index) => [`existing-${index}`, "1"]),
+    );
+    await writeFile(
+      manifest,
+      `${JSON.stringify({ dependencies: existing }, null, 2)}\n`,
+      "utf8",
+    );
+    git(cwd, ["add", "package.json"]);
+    git(cwd, ["commit", "--quiet", "-m", "add large manifest"]);
+    await writeFile(
+      manifest,
+      `${JSON.stringify(
+        { dependencies: { ...existing, added: "1" } },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const policyDirectory = await mkdtemp(
+      join(tmpdir(), "agentgate-manifest-policy-"),
+    );
+    temporaryDirectories.push(policyDirectory);
+    const policy = join(policyDirectory, "policy.yml");
+    await writeFile(
+      policy,
+      "version: 1\ngit:\n  commandTimeoutMs: 5000\n  maxDiffBytes: 1024\n",
+      "utf8",
+    );
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(
+      ["check", "--format", "json", "--config", policy],
+      cwd,
+      {
+        stdout: (value) => stdout.push(value),
+        stderr: (value) => stderr.push(value),
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(stderr).toEqual([]);
+    expect(JSON.parse(stdout[0] ?? "")).toMatchObject({
+      error: { code: "RESOURCE_LIMIT" },
+    });
+  });
+
   it("includes repository-relative untracked files when invoked from a subdirectory", async () => {
     const cwd = await repository();
     const subdirectory = join(cwd, "sub");
@@ -377,6 +478,25 @@ describe("Git and CLI integration", () => {
     expect(errors[0]).toContain("Git failed");
   });
 
+  it("returns a structured Git error outside a repository", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "agentgate-nongit-json-"));
+    temporaryDirectories.push(cwd);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(["check", "--format", "json"], cwd, {
+      stdout: (value) => stdout.push(value),
+      stderr: (value) => stderr.push(value),
+    });
+
+    expect(code).toBe(2);
+    expect(stderr).toEqual([]);
+    expect(JSON.parse(stdout[0] ?? "")).toMatchObject({
+      status: "error",
+      exitCode: 2,
+      error: { code: "GIT_ERROR" },
+    });
+  });
+
   it("returns 2 for an invalid explicit configuration", async () => {
     const cwd = await repository();
     const source = "version: 2\n";
@@ -393,6 +513,74 @@ describe("Git and CLI integration", () => {
     );
     expect(code).toBe(2);
     expect(errors[0]).toContain("Configuration version must be 1");
+  });
+
+  it("returns a structured invalid-configuration error", async () => {
+    const cwd = await repository();
+    const source = "version: 2\n";
+    await writeFile(join(cwd, "bad.yml"), source, "utf8");
+    const digest = createHash("sha256").update(source).digest("hex");
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(
+      [
+        "check",
+        "--format",
+        "json",
+        "--config",
+        "bad.yml",
+        "--config-sha256",
+        digest,
+      ],
+      cwd,
+      {
+        stdout: (value) => stdout.push(value),
+        stderr: (value) => stderr.push(value),
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(stderr).toEqual([]);
+    const report = JSON.parse(stdout[0] ?? "") as {
+      error: { code: string; message: string };
+    };
+    expect(report.error.code).toBe("INVALID_CONFIG");
+    expect(report.error.message).toContain("Configuration version must be 1");
+  });
+
+  it("returns a structured resource-limit error", async () => {
+    const cwd = await repository();
+    await writeFile(
+      join(cwd, "app.js"),
+      `export const value = "${"x".repeat(512)}";\n`,
+      "utf8",
+    );
+    const policyDirectory = await mkdtemp(
+      join(tmpdir(), "agentgate-limit-policy-"),
+    );
+    temporaryDirectories.push(policyDirectory);
+    const policy = join(policyDirectory, "policy.yml");
+    await writeFile(
+      policy,
+      "version: 1\ngit:\n  commandTimeoutMs: 5000\n  maxDiffBytes: 128\n",
+      "utf8",
+    );
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli(
+      ["check", "--format", "json", "--config", policy],
+      cwd,
+      {
+        stdout: (value) => stdout.push(value),
+        stderr: (value) => stderr.push(value),
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(stderr).toEqual([]);
+    expect(JSON.parse(stdout[0] ?? "")).toMatchObject({
+      error: { code: "RESOURCE_LIMIT" },
+    });
   });
 
   it("rejects an unpinned policy from inside the checked repository", async () => {
@@ -431,7 +619,13 @@ describe("Git and CLI integration", () => {
     await expect(
       new GitClient(cwd).getDiff(
         {},
-        { maxFileBytes: 8, maxTotalBytes: 16, readTimeoutMs: 500 },
+        {
+          maxFiles: 10,
+          maxFileBytes: 8,
+          maxSymlinkBytes: 8,
+          maxTotalBytes: 16,
+          readTimeoutMs: 500,
+        },
       ),
     ).rejects.toThrow("8-byte scan limit");
   });
@@ -443,9 +637,86 @@ describe("Git and CLI integration", () => {
     await expect(
       new GitClient(cwd).getDiff(
         {},
-        { maxFileBytes: 8, maxTotalBytes: 8, readTimeoutMs: 500 },
+        {
+          maxFiles: 10,
+          maxFileBytes: 8,
+          maxSymlinkBytes: 8,
+          maxTotalBytes: 8,
+          readTimeoutMs: 500,
+        },
       ),
     ).rejects.toThrow("8-byte total scan limit");
+  });
+
+  it("fails closed when the untracked file-count limit is exceeded", async () => {
+    const cwd = await repository();
+    await writeFile(join(cwd, "first.txt"), "one", "utf8");
+    await writeFile(join(cwd, "second.txt"), "two", "utf8");
+    await expect(
+      new GitClient(cwd).getDiff(
+        {},
+        {
+          maxFiles: 1,
+          maxFileBytes: 8,
+          maxSymlinkBytes: 8,
+          maxTotalBytes: 16,
+          readTimeoutMs: 500,
+        },
+      ),
+    ).rejects.toThrow("1-file scan limit");
+  });
+
+  it("fails closed when the configured diff-size limit is exceeded", async () => {
+    const cwd = await repository();
+    await writeFile(
+      join(cwd, "app.js"),
+      `export const value = "${"x".repeat(512)}";\n`,
+      "utf8",
+    );
+    const client = new GitClient(cwd);
+    client.configure({ commandTimeoutMs: 5_000, maxDiffBytes: 128 });
+    await expect(client.getDiff({})).rejects.toThrow(/128-byte .*limit/u);
+  });
+
+  it("detects index mutation after a scan snapshot is captured", async () => {
+    const cwd = await repository();
+    const client = new GitClient(cwd);
+    const snapshot = await client.captureSnapshot({ staged: true });
+    await writeFile(join(cwd, "new.js"), "export const value = 2;\n", "utf8");
+    git(cwd, ["add", "new.js"]);
+    await expect(client.assertSnapshotUnchanged(snapshot)).rejects.toThrow(
+      "HEAD or index changed",
+    );
+  });
+
+  it("detects working-tree mutation after a diff is captured", async () => {
+    const cwd = await repository();
+    const client = new GitClient(cwd);
+    const snapshot = await client.captureSnapshot({});
+    const patch = await client.getDiff(snapshot);
+    await writeFile(join(cwd, "app.js"), "export const value = 3;\n", "utf8");
+    await expect(
+      client.assertDiffUnchanged(snapshot, defaultConfig.untracked, patch),
+    ).rejects.toThrow("modified while AgentGate was scanning");
+  });
+
+  it("rejects an oversized Git-backed policy before parsing it", async () => {
+    const cwd = await repository();
+    await writeFile(
+      join(cwd, ".agentgate.yml"),
+      "x".repeat(1024 * 1024 + 1),
+      "utf8",
+    );
+    git(cwd, ["add", ".agentgate.yml"]);
+    git(cwd, ["commit", "--quiet", "-m", "oversized policy"]);
+    const errors: string[] = [];
+    expect(
+      await runCli(["check"], cwd, {
+        stdout: () => undefined,
+        stderr: (value) => errors.push(value),
+      }),
+    ).toBe(2);
+    expect(errors[0]).toContain("exceeds 1048576 bytes");
   });
 
   it.runIf(process.platform !== "win32")(

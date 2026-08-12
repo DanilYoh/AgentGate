@@ -7,7 +7,13 @@ const rootDirectory = dirname(fileURLToPath(import.meta.url));
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "coverage/**", "eslint.config.js", "scripts/**/*.mjs"],
+    ignores: [
+      "dist/**",
+      "action/dist/**",
+      "coverage/**",
+      "eslint.config.js",
+      "scripts/**/*.mjs",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

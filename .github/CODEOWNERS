@@ -1,0 +1,11 @@
+/.agentgate.yml @DanilYoh
+/.github/ @DanilYoh
+/action.yml @DanilYoh
+/action/ @DanilYoh
+/CHANGELOG.md @DanilYoh
+/package.json @DanilYoh
+/package-lock.json @DanilYoh
+/scripts/bundle-action.mjs @DanilYoh
+/scripts/verify-action-bundle.mjs @DanilYoh
+/scripts/verify-release.mjs @DanilYoh
+/src/version.ts @DanilYoh

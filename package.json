@@ -1,6 +1,6 @@
 {
   "name": "@danilyoh/agentgate",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A deterministic local pre-commit firewall for coding-agent changes.",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "examples",
+    "schemas",
     "docs",
     "README.md",
     "LICENSE",
@@ -24,6 +25,10 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:package": "node scripts/verify-package.mjs",
+    "bundle:action": "node scripts/bundle-action.mjs",
+    "check:action-bundle": "node scripts/bundle-action.mjs --check",
+    "test:action-bundle": "node scripts/verify-action-bundle.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
     "dogfood": "node scripts/dogfood.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -38,7 +43,16 @@
     "cli",
     "coding-agents"
   ],
+  "author": "DanilYoh",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DanilYoh/AgentGate.git"
+  },
+  "homepage": "https://github.com/DanilYoh/AgentGate#readme",
+  "bugs": {
+    "url": "https://github.com/DanilYoh/AgentGate/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -46,10 +60,13 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@actions/core": "3.0.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
     "@types/sarif": "^2.1.7",
+    "@vercel/ncc": "0.44.1",
     "@vitest/coverage-v8": "^4.1.10",
+    "ajv": "^8.20.0",
     "eslint": "^10.8.1",
     "prettier": "^3.9.6",
     "typescript": "^6.0.3",

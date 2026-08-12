@@ -4,6 +4,7 @@ import type {
   DiffSet,
   ScanResult,
   Severity,
+  SuppressedFinding,
 } from "./types.js";
 import { rules as defaultRules } from "./rules/index.js";
 import { matchesPath } from "./path-match.js";
@@ -24,7 +25,7 @@ export function scan(
       const paths = [file.oldPath, file.newPath, file.path].filter(
         (path): path is string => Boolean(path),
       );
-      return !paths.some((path) => matchesPath(path, excludePaths));
+      return !paths.every((path) => matchesPath(path, excludePaths));
     });
     const filteredDiff: DiffSet = {
       files,
@@ -47,17 +48,32 @@ export function scan(
       severity || a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0)
     );
   });
-  const suppressedFindings = findings.filter((item) =>
-    config.suppressions.some(
+  const activeFindings = [];
+  const suppressedFindings: SuppressedFinding[] = [];
+  for (const item of findings) {
+    const suppressionIndex = config.suppressions.findIndex(
       (suppression) =>
         suppression.ruleId === item.ruleId &&
         matchesPath(item.file, [suppression.path]) &&
         (suppression.line === undefined || suppression.line === item.line),
-    ),
-  );
-  const activeFindings = findings.filter(
-    (item) => !suppressedFindings.includes(item),
-  );
+    );
+    if (suppressionIndex === -1) {
+      activeFindings.push(item);
+      continue;
+    }
+    const suppression = config.suppressions[suppressionIndex];
+    if (!suppression) continue;
+    suppressedFindings.push({
+      ...item,
+      suppression: {
+        reason: suppression.reason,
+        source: {
+          kind: "policy",
+          location: `suppressions[${suppressionIndex}]`,
+        },
+      },
+    });
+  }
   return {
     findings: activeFindings,
     suppressedFindings,

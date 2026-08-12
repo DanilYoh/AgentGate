@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/DanilYoh/AgentGate/main/schemas/agentgate-report-v1.schema.json",
+  "title": "AgentGate JSON report version 1",
+  "description": "Successful check reports and machine-readable exit-2 error reports emitted with --format json.",
+  "oneOf": [
+    { "$ref": "#/$defs/successReport" },
+    { "$ref": "#/$defs/errorReport" }
+  ],
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["info", "low", "medium", "high", "critical"]
+    },
+    "ruleId": {
+      "type": "string",
+      "enum": [
+        "secret-added",
+        "test-disabled",
+        "placeholder-added",
+        "dependency-added",
+        "sensitive-file-changed",
+        "scope-violation",
+        "large-change"
+      ]
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "suppression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "source"],
+      "properties": {
+        "reason": { "type": "string" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "location"],
+          "properties": {
+            "kind": { "const": "policy" },
+            "location": { "type": "string" }
+          }
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ruleId",
+        "severity",
+        "file",
+        "message",
+        "evidence",
+        "recommendation"
+      ],
+      "properties": {
+        "ruleId": { "$ref": "#/$defs/ruleId" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "file": { "type": "string" },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "message": { "type": "string" },
+        "evidence": { "type": "string" },
+        "recommendation": { "type": "string" },
+        "suppression": { "$ref": "#/$defs/suppression" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changedFiles",
+        "addedLines",
+        "deletedLines",
+        "findings",
+        "suppressedFindings"
+      ],
+      "properties": {
+        "changedFiles": { "$ref": "#/$defs/count" },
+        "addedLines": { "$ref": "#/$defs/count" },
+        "deletedLines": { "$ref": "#/$defs/count" },
+        "findings": { "$ref": "#/$defs/count" },
+        "suppressedFindings": { "$ref": "#/$defs/count" }
+      }
+    },
+    "successReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "summary",
+        "blockingFindings",
+        "findings",
+        "suppressedFindings"
+      ],
+      "properties": {
+        "version": { "const": 1 },
+        "summary": { "$ref": "#/$defs/summary" },
+        "blockingFindings": { "$ref": "#/$defs/count" },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        },
+        "suppressedFindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      }
+    },
+    "errorCode": {
+      "type": "string",
+      "enum": [
+        "INVALID_ARGUMENT",
+        "INVALID_CONFIG",
+        "POLICY_ERROR",
+        "POLICY_HASH_MISMATCH",
+        "GIT_ERROR",
+        "RESOURCE_LIMIT",
+        "SNAPSHOT_CHANGED",
+        "IO_ERROR",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "$ref": "#/$defs/errorCode" },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "errorReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "status", "exitCode", "error"],
+      "properties": {
+        "version": { "const": 1 },
+        "status": { "const": "error" },
+        "exitCode": { "const": 2 },
+        "error": { "$ref": "#/$defs/error" }
+      }
+    }
+  }
+}

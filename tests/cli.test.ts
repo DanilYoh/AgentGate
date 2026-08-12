@@ -22,18 +22,18 @@ describe("CLI argument handling", () => {
   it("returns 0 for help without requiring a repository", async () => {
     const output = capture();
     expect(await runCli(["--help"], process.cwd(), output.io)).toBe(0);
-    expect(output.stdout[0]).toContain("Usage: agentgate check");
+    expect(output.stdout[0]).toContain("Usage: agentgate <command>");
   });
 
   it("returns 0 for version", async () => {
     const output = capture();
     expect(await runCli(["--version"], process.cwd(), output.io)).toBe(0);
-    expect(output.stdout).toEqual(["0.1.0"]);
+    expect(output.stdout).toEqual(["1.0.0"]);
   });
 
   it.each([
-    [[], "Expected the `check` command"],
-    [["unknown"], "Expected the `check` command"],
+    [[], "Expected one of these commands"],
+    [["unknown"], "Expected one of these commands"],
     [["check", "--staged", "--base", "HEAD"], "cannot be used together"],
     [["check", "--format", "xml"], "--format must be one of"],
     [["check", "--config"], "--config requires a path"],
@@ -47,5 +47,51 @@ describe("CLI argument handling", () => {
     const output = capture();
     expect(await runCli(args, process.cwd(), output.io)).toBe(2);
     expect(output.stderr[0]).toContain(message);
+  });
+
+  it("returns structured JSON for an argument error when requested", async () => {
+    const output = capture();
+    expect(
+      await runCli(
+        ["check", "--format", "json", "--staged", "--base", "HEAD"],
+        process.cwd(),
+        output.io,
+      ),
+    ).toBe(2);
+    expect(output.stderr).toEqual([]);
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
+      status: "error",
+      exitCode: 2,
+      error: { code: "INVALID_ARGUMENT" },
+    });
+  });
+
+  it("returns failed SARIF for an argument error when requested", async () => {
+    const output = capture();
+    expect(
+      await runCli(["unknown", "--format", "sarif"], process.cwd(), output.io),
+    ).toBe(2);
+    expect(output.stderr).toEqual([]);
+    const report = JSON.parse(output.stdout[0] ?? "") as {
+      runs: Array<{
+        invocations: Array<{ executionSuccessful: boolean; exitCode: number }>;
+      }>;
+    };
+    expect(report.runs[0]?.invocations[0]).toEqual(
+      expect.objectContaining({ executionSuccessful: false, exitCode: 2 }),
+    );
+  });
+
+  it("keeps an invalid format error on stderr", async () => {
+    const output = capture();
+    expect(
+      await runCli(
+        ["check", "--format", "json", "--format", "xml"],
+        process.cwd(),
+        output.io,
+      ),
+    ).toBe(2);
+    expect(output.stdout).toEqual([]);
+    expect(output.stderr[0]).toContain("--format must be one of");
   });
 });

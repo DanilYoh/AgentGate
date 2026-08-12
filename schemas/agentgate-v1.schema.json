@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/DanilYoh/AgentGate/main/schemas/agentgate-v1.schema.json",
+  "title": "AgentGate policy version 1",
+  "description": "Configuration accepted by AgentGate policy files.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Policy format version."
+    },
+    "failOn": {
+      "$ref": "#/$defs/severity",
+      "description": "Lowest finding severity that blocks the check."
+    },
+    "allowedPaths": {
+      "$ref": "#/$defs/pathList",
+      "description": "Glob patterns that define the permitted change scope. An empty list permits all paths."
+    },
+    "deniedPaths": {
+      "$ref": "#/$defs/pathList",
+      "description": "Glob patterns that are always denied."
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "changedFiles": { "$ref": "#/$defs/nonNegativeInteger" },
+        "addedLines": { "$ref": "#/$defs/nonNegativeInteger" },
+        "deletedLines": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commandTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000
+        },
+        "maxDiffBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456
+        }
+      }
+    },
+    "untracked": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "maxFileBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "maxSymlinkBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "maxTotalBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "readTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secret-added": { "$ref": "#/$defs/ruleSettings" },
+        "test-disabled": { "$ref": "#/$defs/ruleSettings" },
+        "placeholder-added": { "$ref": "#/$defs/ruleSettings" },
+        "dependency-added": { "$ref": "#/$defs/ruleSettings" },
+        "sensitive-file-changed": { "$ref": "#/$defs/ruleSettings" },
+        "scope-violation": { "$ref": "#/$defs/ruleSettings" },
+        "large-change": { "$ref": "#/$defs/ruleSettings" }
+      }
+    },
+    "suppressions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ruleId", "path", "reason"],
+        "properties": {
+          "ruleId": { "$ref": "#/$defs/ruleId" },
+          "path": { "$ref": "#/$defs/nonEmptyString" },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "reason": { "$ref": "#/$defs/nonEmptyString" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["info", "low", "medium", "high", "critical"]
+    },
+    "ruleLevel": {
+      "type": "string",
+      "enum": [
+        "off",
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical",
+        "warning",
+        "error"
+      ]
+    },
+    "ruleId": {
+      "type": "string",
+      "enum": [
+        "secret-added",
+        "test-disabled",
+        "placeholder-added",
+        "dependency-added",
+        "sensitive-file-changed",
+        "scope-violation",
+        "large-change"
+      ]
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pathList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nonEmptyString" }
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "ruleSettings": {
+      "oneOf": [
+        { "$ref": "#/$defs/ruleLevel" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "level": { "$ref": "#/$defs/ruleLevel" },
+            "excludePaths": { "$ref": "#/$defs/pathList" }
+          }
+        }
+      ]
+    }
+  }
+}

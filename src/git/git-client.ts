@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, open, opendir, readlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -12,15 +13,36 @@ export interface DiffOptions {
 }
 
 export interface UntrackedOptions {
+  maxFiles: number;
   maxFileBytes: number;
+  maxSymlinkBytes: number;
   maxTotalBytes: number;
   readTimeoutMs: number;
 }
 
+export interface GitOptions {
+  commandTimeoutMs: number;
+  maxDiffBytes: number;
+}
+
+export interface GitSnapshot {
+  staged: boolean;
+  head?: string;
+  baseCommit?: string;
+  mergeBase?: string;
+  indexFingerprint: string;
+}
+
 const defaultUntrackedOptions: UntrackedOptions = {
+  maxFiles: 10_000,
   maxFileBytes: 1024 * 1024,
+  maxSymlinkBytes: 4 * 1024,
   maxTotalBytes: 8 * 1024 * 1024,
   readTimeoutMs: 2_000,
+};
+const defaultGitOptions: GitOptions = {
+  commandTimeoutMs: 30_000,
+  maxDiffBytes: 50 * 1024 * 1024,
 };
 const maximumPolicyBytes = 1024 * 1024;
 
@@ -35,11 +57,22 @@ async function withTimeout<T>(
       operation,
       new Promise<T>((_resolve, reject) => {
         timer = setTimeout(
-          () => reject(new AgentGateError(`${description} timed out.`)),
+          () =>
+            reject(
+              new AgentGateError(`${description} timed out.`, {
+                code: "RESOURCE_LIMIT",
+              }),
+            ),
           timeoutMs,
         );
       }),
     ]);
+  } catch (error) {
+    if (error instanceof AgentGateError) throw error;
+    throw new AgentGateError(`${description} failed.`, {
+      cause: error,
+      code: "IO_ERROR",
+    });
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -57,11 +90,13 @@ async function readUntrackedFile(
   if (!stats.isFile()) {
     throw new AgentGateError(
       `Refusing to read non-regular untracked file ${path}.`,
+      { code: "IO_ERROR" },
     );
   }
   if (stats.size > options.maxFileBytes) {
     throw new AgentGateError(
       `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+      { code: "RESOURCE_LIMIT" },
     );
   }
 
@@ -79,11 +114,13 @@ async function readUntrackedFile(
     if (!openedStats.isFile()) {
       throw new AgentGateError(
         `Refusing to read non-regular untracked file ${path}.`,
+        { code: "IO_ERROR" },
       );
     }
     if (openedStats.size > options.maxFileBytes) {
       throw new AgentGateError(
         `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
       );
     }
 
@@ -101,6 +138,7 @@ async function readUntrackedFile(
     if (offset > options.maxFileBytes) {
       throw new AgentGateError(
         `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
       );
     }
     return buffer.subarray(0, offset).toString("utf8");
@@ -143,14 +181,20 @@ function syntheticUntrackedPatch(
 
 export class GitClient {
   private repositoryRoot?: string;
+  private gitOptions: GitOptions = { ...defaultGitOptions };
 
   public constructor(private readonly cwd: string) {}
+
+  public configure(options: GitOptions): void {
+    this.gitOptions = { ...options };
+  }
 
   private async run(
     args: string[],
     cwd = this.repositoryRoot ?? this.cwd,
     allowedExitCodes: readonly number[] = [],
     maxBuffer = 50 * 1024 * 1024,
+    timeoutMs = this.gitOptions.commandTimeoutMs,
   ): Promise<string> {
     try {
       const result = await execFileAsync(
@@ -168,6 +212,8 @@ export class GitClient {
           env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
           encoding: "utf8",
           maxBuffer,
+          timeout: timeoutMs,
+          killSignal: "SIGKILL",
           windowsHide: true,
         },
       );
@@ -175,6 +221,8 @@ export class GitClient {
     } catch (error: unknown) {
       const candidate = error as {
         code?: number | string;
+        killed?: boolean;
+        signal?: NodeJS.Signals;
         stdout?: string;
         stderr?: string;
       };
@@ -185,11 +233,24 @@ export class GitClient {
       ) {
         return candidate.stdout;
       }
+      if (candidate.killed || candidate.signal) {
+        throw new AgentGateError(
+          `Git command timed out after ${timeoutMs} milliseconds.`,
+          { cause: error, code: "RESOURCE_LIMIT" },
+        );
+      }
+      if (candidate.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+        throw new AgentGateError(
+          `Git output exceeds the ${maxBuffer}-byte process limit.`,
+          { cause: error, code: "RESOURCE_LIMIT" },
+        );
+      }
       const detail = candidate.stderr?.trim();
       throw new AgentGateError(
         detail ? `Git failed: ${detail}` : "Unable to run Git.",
         {
           cause: error,
+          code: "GIT_ERROR",
         },
       );
     }
@@ -201,7 +262,9 @@ export class GitClient {
       await this.run(["rev-parse", "--show-toplevel"], this.cwd)
     ).trim();
     if (!root)
-      throw new AgentGateError("Git returned an empty repository root.");
+      throw new AgentGateError("Git returned an empty repository root.", {
+        code: "GIT_ERROR",
+      });
     this.repositoryRoot = root;
     return root;
   }
@@ -217,6 +280,96 @@ export class GitClient {
     return head || undefined;
   }
 
+  private async getIndexFingerprint(): Promise<string> {
+    const index = await this.run(["ls-files", "--stage", "-z"]);
+    return createHash("sha256").update(index).digest("hex");
+  }
+
+  public async captureSnapshot(options: DiffOptions): Promise<GitSnapshot> {
+    const head = await this.getHeadCommit();
+    if (options.base) {
+      if (!head) {
+        throw new AgentGateError("--base requires a repository with HEAD.", {
+          code: "INVALID_ARGUMENT",
+        });
+      }
+      const baseCommit = await this.resolveCommit(options.base);
+      const mergeBase = (
+        await this.run(["merge-base", baseCommit, head])
+      ).trim();
+      if (!mergeBase) {
+        throw new AgentGateError("Git returned an empty merge base.", {
+          code: "GIT_ERROR",
+        });
+      }
+      return {
+        staged: false,
+        head,
+        baseCommit,
+        mergeBase,
+        indexFingerprint: await this.getIndexFingerprint(),
+      };
+    }
+    return {
+      staged: Boolean(options.staged),
+      ...(head ? { head } : {}),
+      indexFingerprint: await this.getIndexFingerprint(),
+    };
+  }
+
+  public async assertSnapshotUnchanged(snapshot: GitSnapshot): Promise<void> {
+    const [head, indexFingerprint] = await Promise.all([
+      this.getHeadCommit(),
+      this.getIndexFingerprint(),
+    ]);
+    if (
+      head !== snapshot.head ||
+      indexFingerprint !== snapshot.indexFingerprint
+    ) {
+      throw new AgentGateError(
+        "Repository HEAD or index changed while AgentGate was scanning; retry the check.",
+        { code: "SNAPSHOT_CHANGED" },
+      );
+    }
+  }
+
+  public async assertDiffUnchanged(
+    snapshot: GitSnapshot,
+    untrackedOptions: UntrackedOptions,
+    expectedPatch: string,
+  ): Promise<void> {
+    const actualPatch = await this.getDiff(snapshot, untrackedOptions);
+    const digest = (value: string) =>
+      createHash("sha256").update(value).digest("hex");
+    if (digest(actualPatch) !== digest(expectedPatch)) {
+      throw new AgentGateError(
+        "Repository changes were modified while AgentGate was scanning; retry the check.",
+        { code: "SNAPSHOT_CHANGED" },
+      );
+    }
+  }
+
+  public async assertFullContextDiffUnchanged(
+    snapshot: GitSnapshot,
+    paths: string[],
+    expectedPatch: string,
+    reservedBytes: number,
+  ): Promise<void> {
+    const actualPatch = await this.getFullContextDiff(
+      snapshot,
+      paths,
+      reservedBytes,
+    );
+    const digest = (value: string) =>
+      createHash("sha256").update(value).digest("hex");
+    if (digest(actualPatch) !== digest(expectedPatch)) {
+      throw new AgentGateError(
+        "A dependency manifest was modified while AgentGate was scanning; retry the check.",
+        { code: "SNAPSHOT_CHANGED" },
+      );
+    }
+  }
+
   public async resolveCommit(ref: string): Promise<string> {
     return (
       await this.run([
@@ -230,7 +383,13 @@ export class GitClient {
 
   public async getMergeBase(ref: string): Promise<string> {
     const commit = await this.resolveCommit(ref);
-    return (await this.run(["merge-base", commit, "HEAD"])).trim();
+    const head = await this.getHeadCommit();
+    if (!head) {
+      throw new AgentGateError("--base requires a repository with HEAD.", {
+        code: "INVALID_ARGUMENT",
+      });
+    }
+    return (await this.run(["merge-base", commit, head])).trim();
   }
 
   public async readFileAt(
@@ -243,9 +402,37 @@ export class GitClient {
     ).trim();
     if (!type) return undefined;
     if (type !== "blob") {
-      throw new AgentGateError(`${path} at ${commit} is not a regular file.`);
+      throw new AgentGateError(`${path} at ${commit} is not a regular file.`, {
+        code: "POLICY_ERROR",
+      });
     }
-    return this.run(["show", object], undefined, [], maximumPolicyBytes + 1);
+    const size = Number(
+      (await this.run(["cat-file", "-s", object], undefined, [], 1024)).trim(),
+    );
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new AgentGateError(`Git returned an invalid size for ${path}.`, {
+        code: "GIT_ERROR",
+      });
+    }
+    if (size > maximumPolicyBytes) {
+      throw new AgentGateError(
+        `${path} at ${commit} exceeds ${maximumPolicyBytes} bytes.`,
+        { code: "RESOURCE_LIMIT" },
+      );
+    }
+    const source = await this.run(
+      ["cat-file", "blob", object],
+      undefined,
+      [],
+      maximumPolicyBytes + 1,
+    );
+    if (Buffer.byteLength(source) > maximumPolicyBytes) {
+      throw new AgentGateError(
+        `${path} at ${commit} exceeds ${maximumPolicyBytes} bytes.`,
+        { code: "RESOURCE_LIMIT" },
+      );
+    }
+    return source;
   }
 
   private async assertNoSpecialFiles(root: string): Promise<void> {
@@ -287,12 +474,21 @@ export class GitClient {
         if (!ignored) {
           throw new AgentGateError(
             `Refusing to inspect non-regular repository path ${relativePath}.`,
+            { code: "IO_ERROR" },
           );
         }
       }
     };
 
-    await visit(root, "");
+    try {
+      await visit(root, "");
+    } catch (error) {
+      if (error instanceof AgentGateError) throw error;
+      throw new AgentGateError("Cannot inspect untracked repository paths.", {
+        cause: error,
+        code: "IO_ERROR",
+      });
+    }
   }
 
   private async includeUntracked(
@@ -305,6 +501,12 @@ export class GitClient {
       root,
     );
     const paths = untrackedOutput.split("\0").filter(Boolean);
+    if (paths.length > options.maxFiles) {
+      throw new AgentGateError(
+        `Untracked files exceed the ${options.maxFiles}-file scan limit.`,
+        { code: "RESOURCE_LIMIT" },
+      );
+    }
     let result = patch;
     let totalBytes = 0;
     for (const path of paths) {
@@ -322,10 +524,18 @@ export class GitClient {
             `Reading untracked symlink ${path}`,
           )
         : await readUntrackedFile(absolutePath, options);
-      totalBytes += Buffer.byteLength(content);
+      const contentBytes = Buffer.byteLength(content);
+      if (isSymbolicLink && contentBytes > options.maxSymlinkBytes) {
+        throw new AgentGateError(
+          `Untracked symlink ${path} exceeds the ${options.maxSymlinkBytes}-byte scan limit.`,
+          { code: "RESOURCE_LIMIT" },
+        );
+      }
+      totalBytes += contentBytes;
       if (totalBytes > options.maxTotalBytes) {
         throw new AgentGateError(
           `Untracked files exceed the ${options.maxTotalBytes}-byte total scan limit.`,
+          { code: "RESOURCE_LIMIT" },
         );
       }
       result += syntheticUntrackedPatch(
@@ -333,15 +543,80 @@ export class GitClient {
         content,
         isSymbolicLink ? "120000" : "100644",
       );
+      if (Buffer.byteLength(result) > this.gitOptions.maxDiffBytes) {
+        throw new AgentGateError(
+          `Git diff exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+          { code: "RESOURCE_LIMIT" },
+        );
+      }
     }
     return result;
   }
 
+  private assertDiffSize(patch: string): string {
+    if (Buffer.byteLength(patch) > this.gitOptions.maxDiffBytes) {
+      throw new AgentGateError(
+        `Git diff exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
+      );
+    }
+    return patch;
+  }
+
+  public async getFullContextDiff(
+    snapshot: GitSnapshot,
+    paths: string[],
+    reservedBytes = 0,
+  ): Promise<string> {
+    if (paths.length === 0) return "";
+    const root = await this.getRepositoryRoot();
+    const remainingBytes = this.gitOptions.maxDiffBytes - reservedBytes;
+    if (remainingBytes <= 0) {
+      throw new AgentGateError(
+        `Dependency manifest context exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
+      );
+    }
+    const common = [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--find-renames=50%",
+      "--ignore-submodules=none",
+      "--unified=2147483647",
+    ];
+    const literalPaths = [...new Set(paths)]
+      .sort((left, right) => left.localeCompare(right))
+      .map((path) => `:(literal)${path}`);
+    const args = snapshot.staged
+      ? [...common, "--cached", "--", ...literalPaths]
+      : snapshot.mergeBase
+        ? [...common, snapshot.mergeBase, "--", ...literalPaths]
+        : snapshot.head
+          ? [...common, snapshot.head, "--", ...literalPaths]
+          : [...common, "--cached", "--", ...literalPaths];
+    const patch = await this.run(args, root, [], remainingBytes);
+    if (Buffer.byteLength(patch) > remainingBytes) {
+      throw new AgentGateError(
+        `Dependency manifest context exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+        { code: "RESOURCE_LIMIT" },
+      );
+    }
+    return patch;
+  }
+
   public async getDiff(
-    options: DiffOptions,
+    options: DiffOptions | GitSnapshot,
     untrackedOptions: UntrackedOptions = defaultUntrackedOptions,
   ): Promise<string> {
     const root = await this.getRepositoryRoot();
+    const snapshot =
+      "indexFingerprint" in options
+        ? options
+        : await this.captureSnapshot(options);
     const common = [
       "diff",
       "--no-ext-diff",
@@ -354,18 +629,44 @@ export class GitClient {
       "--unified=3",
     ];
 
-    if (options.staged) return this.run([...common, "--cached", "--"], root);
+    if (snapshot.staged) {
+      return this.assertDiffSize(
+        await this.run(
+          [...common, "--cached", "--"],
+          root,
+          [],
+          this.gitOptions.maxDiffBytes,
+        ),
+      );
+    }
     await this.assertNoSpecialFiles(root);
-    if (options.base) {
-      const mergeBase = await this.getMergeBase(options.base);
-      const patch = await this.run([...common, mergeBase, "--"], root);
+    if (snapshot.mergeBase) {
+      const patch = this.assertDiffSize(
+        await this.run(
+          [...common, snapshot.mergeBase, "--"],
+          root,
+          [],
+          this.gitOptions.maxDiffBytes,
+        ),
+      );
       return this.includeUntracked(patch, root, untrackedOptions);
     }
 
-    const head = await this.getHeadCommit();
-    const patch = head
-      ? await this.run([...common, "HEAD", "--"], root)
-      : await this.run([...common, "--cached", "--"], root);
+    const patch = this.assertDiffSize(
+      snapshot.head
+        ? await this.run(
+            [...common, snapshot.head, "--"],
+            root,
+            [],
+            this.gitOptions.maxDiffBytes,
+          )
+        : await this.run(
+            [...common, "--cached", "--"],
+            root,
+            [],
+            this.gitOptions.maxDiffBytes,
+          ),
+    );
     return this.includeUntracked(patch, root, untrackedOptions);
   }
 }

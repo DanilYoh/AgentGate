@@ -62,6 +62,19 @@ export interface FindingSuppression {
   reason: string;
 }
 
+export interface AppliedSuppression {
+  reason: string;
+  source: {
+    kind: "policy";
+    location: string;
+  };
+}
+
+export interface SuppressedFinding extends Finding {
+  /** Optional so programmatic callers constructing legacy ScanResult values remain compatible. */
+  suppression?: AppliedSuppression;
+}
+
 export interface AgentGateConfig {
   version: 1;
   failOn: Severity;
@@ -75,8 +88,14 @@ export interface AgentGateConfig {
   rules: Record<RuleId, RuleLevel>;
   ruleExcludePaths: Record<RuleId, string[]>;
   suppressions: FindingSuppression[];
+  git: {
+    commandTimeoutMs: number;
+    maxDiffBytes: number;
+  };
   untracked: {
+    maxFiles: number;
     maxFileBytes: number;
+    maxSymlinkBytes: number;
     maxTotalBytes: number;
     readTimeoutMs: number;
   };
@@ -94,7 +113,7 @@ export interface Rule {
 
 export interface ScanResult {
   findings: Finding[];
-  suppressedFindings: Finding[];
+  suppressedFindings: SuppressedFinding[];
   blockingFindings: number;
   summary: {
     changedFiles: number;

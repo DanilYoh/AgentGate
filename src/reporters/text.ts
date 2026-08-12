@@ -7,24 +7,36 @@ export function formatText(result: ScanResult): string {
   ];
   if (result.findings.length === 0) {
     lines.push("No findings.");
-    if (result.suppressedFindings.length > 0) {
-      lines.push(`${result.suppressedFindings.length} finding(s) suppressed.`);
+  } else {
+    for (const item of result.findings) {
+      const location = `${safeTextFragment(item.file)}${item.line === undefined ? "" : `:${item.line}`}`;
+      lines.push(
+        "",
+        `[${item.severity.toUpperCase()}] ${item.ruleId} at ${location}`,
+        `  ${safeTextFragment(item.message)}`,
+        `  Evidence: ${safeTextFragment(safeEvidence(item.evidence))}`,
+        `  Fix: ${safeTextFragment(item.recommendation)}`,
+      );
     }
-    return lines.join("\n");
+    lines.push("", `${result.blockingFindings} blocking finding(s).`);
   }
-  for (const item of result.findings) {
-    const location = `${safeTextFragment(item.file)}${item.line === undefined ? "" : `:${item.line}`}`;
+  if (result.suppressedFindings.length > 0) {
     lines.push(
       "",
-      `[${item.severity.toUpperCase()}] ${item.ruleId} at ${location}`,
-      `  ${safeTextFragment(item.message)}`,
-      `  Evidence: ${safeTextFragment(safeEvidence(item.evidence))}`,
-      `  Fix: ${safeTextFragment(item.recommendation)}`,
+      `${result.suppressedFindings.length} finding(s) suppressed:`,
     );
-  }
-  lines.push("", `${result.blockingFindings} blocking finding(s).`);
-  if (result.suppressedFindings.length > 0) {
-    lines.push(`${result.suppressedFindings.length} finding(s) suppressed.`);
+    for (const item of result.suppressedFindings) {
+      const location = `${safeTextFragment(item.file)}${item.line === undefined ? "" : `:${item.line}`}`;
+      lines.push(
+        `  [${item.severity.toUpperCase()}] ${item.ruleId} at ${location}`,
+      );
+      if (item.suppression) {
+        lines.push(
+          `    Reason: ${safeTextFragment(safeEvidence(item.suppression.reason, 240))}`,
+          `    Source: ${safeTextFragment(item.suppression.source.kind)} ${safeTextFragment(item.suppression.source.location)}`,
+        );
+      }
+    }
   }
   return lines.join("\n");
 }
