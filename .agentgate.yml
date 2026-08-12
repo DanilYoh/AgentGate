@@ -27,6 +27,7 @@ rules:
       - "tests/diff-parser.test.ts"
       - "scripts/verify-package.mjs"
       - "docs/demo-script.md"
+      - "action/dist/**"
   test-disabled:
     level: error
     excludePaths:
@@ -40,6 +41,7 @@ rules:
       - "src/rules/placeholder-added.ts"
       - "README.md"
       - "docs/**"
+      - "action/dist/**"
   dependency-added: warning
   sensitive-file-changed: warning
   scope-violation: error

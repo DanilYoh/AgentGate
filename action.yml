@@ -1,0 +1,33 @@
+name: AgentGate
+description: Deterministically scan a pinned Git change with a pinned policy.
+author: DanilYoh
+
+inputs:
+  head-sha:
+    description: Full 40- or 64-character commit ID checked out as HEAD.
+    required: true
+  base-sha:
+    description: Full immutable commit ID used as the comparison base.
+    required: true
+  policy-sha:
+    description: Full immutable commit ID containing the trusted .agentgate.yml.
+    required: true
+  format:
+    description: Report format (sarif, json, or text).
+    required: false
+    default: sarif
+
+outputs:
+  report-path:
+    description: Absolute path to the sanitized report under RUNNER_TEMP.
+  exit-code:
+    description:
+      AgentGate result (0 clean, 1 blocking finding, 2 fail-closed error).
+
+runs:
+  using: node24
+  main: action/dist/index.js
+
+branding:
+  icon: shield
+  color: purple

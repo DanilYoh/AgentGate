@@ -25,6 +25,9 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:package": "node scripts/verify-package.mjs",
+    "bundle:action": "node scripts/bundle-action.mjs",
+    "check:action-bundle": "node scripts/bundle-action.mjs --check",
+    "test:action-bundle": "node scripts/verify-action-bundle.mjs",
     "dogfood": "node scripts/dogfood.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -47,9 +50,11 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@actions/core": "3.0.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
     "@types/sarif": "^2.1.7",
+    "@vercel/ncc": "0.44.1",
     "@vitest/coverage-v8": "^4.1.10",
     "ajv": "^8.20.0",
     "eslint": "^10.8.1",

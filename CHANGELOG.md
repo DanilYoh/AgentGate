@@ -4,6 +4,9 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+- Add a self-contained Node.js 24 GitHub Action with immutable head, base, and
+  policy inputs, protected report files, a reproducible committed bundle, and
+  isolated bundle verification without `node_modules`.
 - Ship tested, offline hook templates for Husky, Lefthook, and pre-commit.
 - Add safe `init`, `validate-config`, and `explain` commands, plus a single rule
   metadata registry shared by CLI explanations and SARIF descriptors.

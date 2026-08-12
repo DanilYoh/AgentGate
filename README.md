@@ -256,20 +256,60 @@ framework-agnostic pre-commit template uses `language: system`,
 integrations deliberately use the locally installed scoped package and
 `--offline`, so npm cannot fall back to downloading a different executable.
 
-In CI, fetch full history and select policy from the protected base branch:
+AgentGate also ships as a self-contained JavaScript Action. It does not run
+`npm install`, invoke `npm exec`, fetch refs, or write into the checked
+repository. The Action accepts only full immutable commit IDs and writes one
+sanitized report beneath `RUNNER_TEMP`. Pin the Action itself to a reviewed full
+commit ID, never a branch or mutable tag:
 
 ```yaml
-- uses: actions/checkout@v4
-  with:
-    fetch-depth: 0
-- run: npm ci
-- run:
-    npm exec --offline -- agentgate check --base origin/main --policy-ref
-    origin/main
+name: AgentGate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  agentgate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check agent change
+        id: agentgate
+        uses: DanilYoh/AgentGate@<FULL_40_CHARACTER_ACTION_COMMIT_SHA>
+        with:
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          base-sha: ${{ github.event.pull_request.base.sha }}
+          policy-sha: ${{ github.event.pull_request.base.sha }}
+          format: sarif
+
+      - name: Upload AgentGate SARIF
+        if: always() && steps.agentgate.outputs.report-path != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.agentgate.outputs.report-path }}
 ```
 
-Protect changes to the package lock, hook, workflow, and policy through normal
-code ownership and branch protection.
+Exit codes `1` and `2` both fail the Action step, while `report-path` and
+`exit-code` remain available to a following `if: always()` step. The checkout
+must contain the pinned head, base, and policy commits; missing objects fail
+closed. For repositories that do not upload SARIF, omit the upload step and the
+`security-events: write` permission. Pin third-party Actions to reviewed full
+commit IDs in a production workflow as well.
+
+If installing the npm package in CI instead, fetch full history and use the same
+locally controlled dependency with
+`agentgate check --base origin/main --policy-ref origin/main`. Protect changes
+to the package lock, hook, workflow, and policy through normal code ownership
+and branch protection.
 
 Git is invoked directly without a shell. External diff and text-conversion
 drivers, pagers, and filesystem monitors are disabled for the scan;
