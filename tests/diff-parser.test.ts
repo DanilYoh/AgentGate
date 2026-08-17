@@ -59,6 +59,27 @@ Binary files /dev/null and b/image.png differ
     });
   });
 
+  it("classifies forced-text patches containing NUL bytes as binary", () => {
+    const diff = parseGitDiff(`diff --git a/image.png b/image.png
+new file mode 100644
+--- /dev/null
++++ b/image.png
+@@ -0,0 +1 @@
++before\0after
+`);
+    expect(diff).toMatchObject({
+      changedFiles: 1,
+      addedLines: 0,
+      deletedLines: 0,
+    });
+    expect(diff.files[0]).toMatchObject({
+      path: "image.png",
+      isNew: true,
+      isBinary: true,
+      additions: [],
+    });
+  });
+
   it("parses quoted paths containing spaces", () => {
     const diff = parseGitDiff(`diff --git "a/my file.txt" "b/my file.txt"
 --- "a/my file.txt"
