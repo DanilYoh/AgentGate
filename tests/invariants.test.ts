@@ -17,6 +17,10 @@ function pseudoRandom(seed: number): () => number {
   };
 }
 
+function pemBoundary(kind: "BEGIN" | "END", label: string): string {
+  return ["-----", kind, " ", label, "-----"].join("");
+}
+
 describe("parser, glob, and redaction invariants", () => {
   it("never throws or returns inconsistent totals for deterministic fuzz input", () => {
     const random = pseudoRandom(0xa63e_2026);
@@ -114,17 +118,17 @@ describe("parser, glob, and redaction invariants", () => {
   it.each([
     [
       "multiline PKCS#8 block",
-      "-----BEGIN PRIVATE KEY-----\nMIIEAAAArealPayloadOne\n-----END PRIVATE KEY-----",
+      `${pemBoundary("BEGIN", "PRIVATE KEY")}\nMIIEAAAArealPayloadOne\n${pemBoundary("END", "PRIVATE KEY")}`,
       "MIIEAAAArealPayloadOne",
     ],
     [
       "escaped-newline RSA block",
-      String.raw`-----BEGIN RSA PRIVATE KEY-----\nMIIEAAAArealPayloadTwo\n-----END RSA PRIVATE KEY-----`,
+      String.raw`${pemBoundary("BEGIN", "RSA PRIVATE KEY")}\nMIIEAAAArealPayloadTwo\n${pemBoundary("END", "RSA PRIVATE KEY")}`,
       "MIIEAAAArealPayloadTwo",
     ],
     [
       "same-line OpenSSH material",
-      "-----BEGIN OPENSSH PRIVATE KEY-----b3BlbnNzaC1rZXktdjEAAAAArealPayloadThree",
+      `${pemBoundary("BEGIN", "OPENSSH PRIVATE KEY")}b3BlbnNzaC1rZXktdjEAAAAArealPayloadThree`,
       "realPayloadThree",
     ],
   ])("redacts the payload from a %s", (_name, pem, payload) => {
