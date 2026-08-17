@@ -201,7 +201,18 @@ describe("dependency-added", () => {
       ["[dependencies.serde]", 'version = "1"', 'features = ["derive"]'],
       "serde",
     ],
+    [
+      "Cargo.toml",
+      ['[dependencies."serde-json"]', 'version = "1"'],
+      "serde-json",
+    ],
     ["Cargo.toml", ["[dependencies]", "serde.workspace = true"], "serde"],
+    ["Cargo.toml", ["[dependencies]", 'serde.version = "1"'], "serde"],
+    [
+      "Cargo.toml",
+      ["[dependencies]", 'serde.git = "https://github.com/serde-rs/serde.git"'],
+      "serde",
+    ],
     [
       "Gemfile",
       ["source 'https://rubygems.org'", "gem 'rack', '~> 3.0'"],

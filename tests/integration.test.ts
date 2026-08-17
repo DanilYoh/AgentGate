@@ -421,6 +421,53 @@ describe("Git and CLI integration", () => {
     );
   });
 
+  it("omits deleted index-tracked files from the unborn working tree", async () => {
+    const cwd = await unbornRepository();
+    const path = join(cwd, "deleted.js");
+    await writeFile(
+      path,
+      `export const token = "${riskySyntheticSecret}";\n`,
+      "utf8",
+    );
+    git(cwd, ["add", "deleted.js"]);
+    await rm(path);
+
+    const client = new GitClient(cwd);
+    const defaultDiff = parseGitDiff(await client.getDiff({}));
+    const stagedDiff = parseGitDiff(await client.getDiff({ staged: true }));
+
+    expect(defaultDiff.files.map((file) => file.path)).not.toContain(
+      "deleted.js",
+    );
+    expect(stagedDiff.files.map((file) => file.path)).toContain("deleted.js");
+  });
+
+  it("returns current full context only for requested unborn paths", async () => {
+    const cwd = await unbornRepository();
+    await writeFile(join(cwd, "other.json"), '{"state":"other"}\n', "utf8");
+    await writeFile(join(cwd, "selected.json"), '{"state":"staged"}\n', "utf8");
+    git(cwd, ["add", "other.json", "selected.json"]);
+    await writeFile(
+      join(cwd, "selected.json"),
+      '{"state":"current"}\n',
+      "utf8",
+    );
+
+    const client = new GitClient(cwd);
+    const snapshot = await client.captureSnapshot({});
+    const diff = parseGitDiff(
+      await client.getFullContextDiff(snapshot, [
+        "selected.json",
+        "missing.json",
+      ]),
+    );
+
+    expect(diff.files.map((file) => file.path)).toEqual(["selected.json"]);
+    expect(diff.files[0]?.additions.map((line) => line.content)).toContain(
+      '{"state":"current"}',
+    );
+  });
+
   it("loads the default config from the repository root", async () => {
     const cwd = await repository();
     const subdirectory = join(cwd, "sub");
