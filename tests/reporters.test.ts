@@ -82,6 +82,20 @@ describe("reporters", () => {
     }
   });
 
+  it("never includes private-key payloads in formatted evidence", () => {
+    const payload = "MIIEAAAAreportPayloadMustNotSurvive";
+    const unsafe = structuredClone(result);
+    const first = unsafe.findings[0];
+    if (!first) throw new Error("fixture did not produce a finding");
+    first.evidence = String.raw`pem=-----BEGIN ENCRYPTED PRIVATE KEY-----\n${payload}\n-----END ENCRYPTED PRIVATE KEY-----`;
+
+    for (const formatter of [formatText, formatJson, formatSarif]) {
+      const output = formatter(unsafe);
+      expect(output).not.toContain(payload);
+      expect(output).toContain("REDACTED");
+    }
+  });
+
   it("encodes SARIF artifact URIs and supplies rule indexes", () => {
     const unsafe = structuredClone(result);
     const first = unsafe.findings[0];

@@ -111,6 +111,34 @@ describe("parser, glob, and redaction invariants", () => {
     expect(safeTextFragment(source)).not.toContain(secret);
   });
 
+  it.each([
+    [
+      "multiline PKCS#8 block",
+      "-----BEGIN PRIVATE KEY-----\nMIIEAAAArealPayloadOne\n-----END PRIVATE KEY-----",
+      "MIIEAAAArealPayloadOne",
+    ],
+    [
+      "escaped-newline RSA block",
+      String.raw`-----BEGIN RSA PRIVATE KEY-----\nMIIEAAAArealPayloadTwo\n-----END RSA PRIVATE KEY-----`,
+      "MIIEAAAArealPayloadTwo",
+    ],
+    [
+      "same-line OpenSSH material",
+      "-----BEGIN OPENSSH PRIVATE KEY-----b3BlbnNzaC1rZXktdjEAAAAArealPayloadThree",
+      "realPayloadThree",
+    ],
+  ])("redacts the payload from a %s", (_name, pem, payload) => {
+    const source = `prefix ${pem} suffix`;
+    for (const sanitized of [
+      redactSecrets(source),
+      safeEvidence(source),
+      safeTextFragment(source),
+    ]) {
+      expect(sanitized).not.toContain(payload);
+      expect(sanitized).toContain("[REDACTED]");
+    }
+  });
+
   it("bounds evidence and escapes every C0/C1 terminal control", () => {
     const controls = Array.from({ length: 160 }, (_, code) =>
       String.fromCodePoint(code),

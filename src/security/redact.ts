@@ -1,5 +1,19 @@
+const privateKeyLabel = String.raw`(?:[A-Z0-9][A-Z0-9 -]* )?PRIVATE KEY`;
+const privateKeyHeaderPattern = new RegExp(
+  String.raw`-----BEGIN ${privateKeyLabel}-----`,
+  "giu",
+);
+const privateKeyBlockPattern = new RegExp(
+  String.raw`-----BEGIN (${privateKeyLabel})-----[\s\S]*?-----END \1-----`,
+  "giu",
+);
+const privateKeyLinePattern = new RegExp(
+  String.raw`-----BEGIN ${privateKeyLabel}-----[^\r\n]*`,
+  "giu",
+);
+
 const knownSecretPatterns: RegExp[] = [
-  /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/giu,
+  privateKeyHeaderPattern,
   /\bAKIA[0-9A-Z]{16}\b/gu,
   /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/gu,
   /\bglpat-[A-Za-z0-9_-]{20,}\b/gu,
@@ -123,6 +137,10 @@ export function hasLikelySecret(value: string): boolean {
 
 export function redactSecrets(value: string): string {
   let safe = value.replace(credentialUrlPattern, "$1[REDACTED]@");
+  privateKeyBlockPattern.lastIndex = 0;
+  safe = safe.replace(privateKeyBlockPattern, "[REDACTED]");
+  privateKeyLinePattern.lastIndex = 0;
+  safe = safe.replace(privateKeyLinePattern, "[REDACTED]");
   for (const pattern of knownSecretPatterns) {
     pattern.lastIndex = 0;
     safe = safe.replace(pattern, "[REDACTED]");
