@@ -78,76 +78,72 @@ async function withTimeout<T>(
   }
 }
 
-async function readUntrackedFile(
+async function readRegularFile(
   path: string,
-  options: UntrackedOptions,
+  maxFileBytes: number,
+  readTimeoutMs: number,
+  description: string,
 ): Promise<string> {
   const stats = await withTimeout(
     lstat(path),
-    options.readTimeoutMs,
-    `Inspecting untracked file ${path}`,
+    readTimeoutMs,
+    `Inspecting ${description}`,
   );
   if (!stats.isFile()) {
-    throw new AgentGateError(
-      `Refusing to read non-regular untracked file ${path}.`,
-      { code: "IO_ERROR" },
-    );
+    throw new AgentGateError(`Refusing to read non-regular ${description}.`, {
+      code: "IO_ERROR",
+    });
   }
-  if (stats.size > options.maxFileBytes) {
+  if (stats.size > maxFileBytes) {
     throw new AgentGateError(
-      `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+      `${description} exceeds the ${maxFileBytes}-byte scan limit.`,
       { code: "RESOURCE_LIMIT" },
     );
   }
 
   const handle = await withTimeout(
     open(path, "r"),
-    options.readTimeoutMs,
-    `Opening untracked file ${path}`,
+    readTimeoutMs,
+    `Opening ${description}`,
   );
   try {
     const openedStats = await withTimeout(
       handle.stat(),
-      options.readTimeoutMs,
-      `Inspecting opened untracked file ${path}`,
+      readTimeoutMs,
+      `Inspecting opened ${description}`,
     );
     if (!openedStats.isFile()) {
-      throw new AgentGateError(
-        `Refusing to read non-regular untracked file ${path}.`,
-        { code: "IO_ERROR" },
-      );
+      throw new AgentGateError(`Refusing to read non-regular ${description}.`, {
+        code: "IO_ERROR",
+      });
     }
-    if (openedStats.size > options.maxFileBytes) {
+    if (openedStats.size > maxFileBytes) {
       throw new AgentGateError(
-        `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+        `${description} exceeds the ${maxFileBytes}-byte scan limit.`,
         { code: "RESOURCE_LIMIT" },
       );
     }
 
-    const buffer = Buffer.alloc(options.maxFileBytes + 1);
+    const buffer = Buffer.alloc(maxFileBytes + 1);
     let offset = 0;
     while (offset < buffer.length) {
       const read = await withTimeout(
         handle.read(buffer, offset, buffer.length - offset, offset),
-        options.readTimeoutMs,
-        `Reading untracked file ${path}`,
+        readTimeoutMs,
+        `Reading ${description}`,
       );
       if (read.bytesRead === 0) break;
       offset += read.bytesRead;
     }
-    if (offset > options.maxFileBytes) {
+    if (offset > maxFileBytes) {
       throw new AgentGateError(
-        `Untracked file ${path} exceeds the ${options.maxFileBytes}-byte scan limit.`,
+        `${description} exceeds the ${maxFileBytes}-byte scan limit.`,
         { code: "RESOURCE_LIMIT" },
       );
     }
     return buffer.subarray(0, offset).toString("utf8");
   } finally {
-    await withTimeout(
-      handle.close(),
-      options.readTimeoutMs,
-      `Closing untracked file ${path}`,
-    );
+    await withTimeout(handle.close(), readTimeoutMs, `Closing ${description}`);
   }
 }
 
@@ -523,7 +519,12 @@ export class GitClient {
             options.readTimeoutMs,
             `Reading untracked symlink ${path}`,
           )
-        : await readUntrackedFile(absolutePath, options);
+        : await readRegularFile(
+            absolutePath,
+            options.maxFileBytes,
+            options.readTimeoutMs,
+            `untracked file ${path}`,
+          );
       const contentBytes = Buffer.byteLength(content);
       if (isSymbolicLink && contentBytes > options.maxSymlinkBytes) {
         throw new AgentGateError(
@@ -563,6 +564,98 @@ export class GitClient {
     return patch;
   }
 
+  private async getUnbornWorkingTreeDiff(
+    root: string,
+    requestedPaths?: readonly string[],
+    maxBytes = this.gitOptions.maxDiffBytes,
+  ): Promise<string> {
+    const entries = (
+      await this.run(["ls-files", "--stage", "--full-name", "-z"], root)
+    )
+      .split("\0")
+      .filter(Boolean);
+    const requested = requestedPaths ? new Set(requestedPaths) : undefined;
+    let patch = "";
+
+    for (const entry of entries) {
+      const divider = entry.indexOf("\t");
+      if (divider < 0) {
+        throw new AgentGateError("Git returned an invalid index entry.", {
+          code: "GIT_ERROR",
+        });
+      }
+      const metadata = entry.slice(0, divider).split(" ");
+      const mode = metadata[0];
+      const stage = metadata[2];
+      const path = entry.slice(divider + 1);
+      if (stage !== "0") {
+        throw new AgentGateError(
+          `Cannot inspect unmerged index-tracked path ${path}.`,
+          { code: "GIT_ERROR" },
+        );
+      }
+      if (requested && !requested.has(path)) continue;
+
+      const absolutePath = resolve(root, path);
+      let stats;
+      try {
+        stats = await withTimeout(
+          lstat(absolutePath),
+          this.gitOptions.commandTimeoutMs,
+          `Inspecting index-tracked file ${path}`,
+        );
+      } catch (error) {
+        const cause =
+          error instanceof AgentGateError
+            ? (error.cause as NodeJS.ErrnoException | undefined)
+            : undefined;
+        if (cause?.code === "ENOENT") continue;
+        throw error;
+      }
+      if (stats.isDirectory()) {
+        if (mode === "160000") {
+          throw new AgentGateError(
+            `Cannot inspect index-tracked submodule ${path} before the first commit.`,
+            { code: "GIT_ERROR" },
+          );
+        }
+        continue;
+      }
+      if (!stats.isFile() && !stats.isSymbolicLink()) {
+        throw new AgentGateError(
+          `Refusing to read non-regular index-tracked file ${path}.`,
+          { code: "IO_ERROR" },
+        );
+      }
+
+      const isSymbolicLink = stats.isSymbolicLink();
+      const content = isSymbolicLink
+        ? await withTimeout(
+            readlink(absolutePath),
+            this.gitOptions.commandTimeoutMs,
+            `Reading index-tracked symlink ${path}`,
+          )
+        : await readRegularFile(
+            absolutePath,
+            maxBytes,
+            this.gitOptions.commandTimeoutMs,
+            `index-tracked file ${path}`,
+          );
+      patch += syntheticUntrackedPatch(
+        path,
+        content,
+        isSymbolicLink ? "120000" : mode === "100755" ? mode : "100644",
+      );
+      if (Buffer.byteLength(patch) > maxBytes) {
+        throw new AgentGateError(
+          `Git diff exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
+          { code: "RESOURCE_LIMIT" },
+        );
+      }
+    }
+    return patch;
+  }
+
   public async getFullContextDiff(
     snapshot: GitSnapshot,
     paths: string[],
@@ -579,6 +672,7 @@ export class GitClient {
     }
     const common = [
       "diff",
+      "--text",
       "--no-ext-diff",
       "--no-textconv",
       "--no-color",
@@ -597,8 +691,14 @@ export class GitClient {
         ? [...common, snapshot.mergeBase, "--", ...literalPaths]
         : snapshot.head
           ? [...common, snapshot.head, "--", ...literalPaths]
-          : [...common, "--cached", "--", ...literalPaths];
-    const patch = await this.run(args, root, [], remainingBytes);
+          : undefined;
+    const patch = args
+      ? await this.run(args, root, [], remainingBytes)
+      : await this.getUnbornWorkingTreeDiff(
+          root,
+          literalPaths.map((path) => path.slice(10)),
+          remainingBytes,
+        );
     if (Buffer.byteLength(patch) > remainingBytes) {
       throw new AgentGateError(
         `Dependency manifest context exceeds the ${this.gitOptions.maxDiffBytes}-byte scan limit.`,
@@ -619,6 +719,7 @@ export class GitClient {
         : await this.captureSnapshot(options);
     const common = [
       "diff",
+      "--text",
       "--no-ext-diff",
       "--no-textconv",
       "--no-color",
@@ -660,12 +761,7 @@ export class GitClient {
             [],
             this.gitOptions.maxDiffBytes,
           )
-        : await this.run(
-            [...common, "--cached", "--"],
-            root,
-            [],
-            this.gitOptions.maxDiffBytes,
-          ),
+        : await this.getUnbornWorkingTreeDiff(root),
     );
     return this.includeUntracked(patch, root, untrackedOptions);
   }

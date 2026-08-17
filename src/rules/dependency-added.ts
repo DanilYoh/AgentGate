@@ -165,6 +165,42 @@ function requirement(
   line: ChangedLine,
   side: ManifestSide,
 ): Dependency | undefined {
+  const vcsMatch =
+    /^\s*(?:(?:-e|--editable)(?:\s+|=))?((?:git|hg|svn|bzr)\+\S+?)(?:\s+#.*)?\s*$/iu.exec(
+      line.content,
+    );
+  if (vcsMatch?.[1]) {
+    const source = vcsMatch[1];
+    const egg = /[#&]egg=([^&\s]+)/iu.exec(source)?.[1];
+    let displayName: string | undefined;
+    if (egg) {
+      try {
+        displayName = decodeURIComponent(egg);
+      } catch {
+        displayName = egg;
+      }
+    } else {
+      const path = source.split("#", 1)[0]?.split("?", 1)[0] ?? source;
+      const segment = path.split("/").at(-1)?.split("@", 1)[0];
+      if (segment) {
+        try {
+          displayName = decodeURIComponent(segment).replace(/\.git$/iu, "");
+        } catch {
+          displayName = segment.replace(/\.git$/iu, "");
+        }
+      }
+    }
+    if (
+      displayName &&
+      /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^\]]+\])?$/u.test(displayName)
+    ) {
+      const identityName = displayName.replace(/\[[^\]]+\]$/u, "");
+      return dependency(displayName, source, sourceLine(line, side), () =>
+        normalizePythonName(identityName),
+      );
+    }
+  }
+
   const match =
     /^\s*([A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^\]]+\])?)(?:\s*((?:===|==|~=|>=|<=|>|<|!=).+?|@\s*\S+))?\s*(?:;.*)?$/u.exec(
       line.content,
@@ -248,26 +284,51 @@ function pyprojectMapDependency(
   );
 }
 
+function tomlSquareBracketDelta(content: string): number {
+  let delta = 0;
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  for (const character of content) {
+    if (quote) {
+      if (quote === '"' && escaped) {
+        escaped = false;
+      } else if (quote === '"' && character === "\\") {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (character === "#") break;
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === "[") {
+      delta += 1;
+    } else if (character === "]") {
+      delta -= 1;
+    }
+  }
+  return delta;
+}
+
 function pyprojectDependencies(
   file: FileDiff,
   side: ManifestSide,
 ): Dependency[] {
   const results: Dependency[] = [];
   let section = "";
-  let inProjectDependencies = false;
+  let projectDependenciesDepth = 0;
   for (const line of linesFor(file, side)) {
     const heading = /^\s*\[([^\]]+)\]\s*$/u.exec(line.content);
     if (heading?.[1]) {
       section = heading[1].toLowerCase();
-      inProjectDependencies = false;
+      projectDependenciesDepth = 0;
       continue;
     }
-    if (
-      section === "project" &&
-      /^\s*dependencies\s*=\s*\[/u.test(line.content)
-    ) {
-      inProjectDependencies = true;
-    }
+    const projectDependenciesStart =
+      section === "project" && /^\s*dependencies\s*=\s*\[/u.test(line.content);
+    const inProjectDependencies =
+      projectDependenciesDepth > 0 || projectDependenciesStart;
     const arraySection =
       inProjectDependencies ||
       section === "project.optional-dependencies" ||
@@ -282,8 +343,16 @@ function pyprojectDependencies(
       const item = pyprojectMapDependency(line, side);
       if (item) results.push(item);
     }
-    if (inProjectDependencies && line.content.includes("]")) {
-      inProjectDependencies = false;
+    if (projectDependenciesStart) {
+      projectDependenciesDepth = Math.max(
+        0,
+        tomlSquareBracketDelta(line.content),
+      );
+    } else if (projectDependenciesDepth > 0) {
+      projectDependenciesDepth = Math.max(
+        0,
+        projectDependenciesDepth + tomlSquareBracketDelta(line.content),
+      );
     }
   }
   return results;
@@ -319,6 +388,45 @@ function cargoSectionIsDependencies(section: string): boolean {
   );
 }
 
+function tomlDependencyKey(value: string): string | undefined {
+  const trimmed = value.trim();
+  const quoted = /^(?:"([^"]+)"|'([^']+)')$/u.exec(trimmed);
+  if (quoted) return quoted[1] ?? quoted[2];
+  return /^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(trimmed) ? trimmed : undefined;
+}
+
+function cargoDependencyTableName(section: string): string | undefined {
+  const match =
+    /^(?:dev-|build-)?dependencies\.(.+)$/iu.exec(section) ??
+    /^workspace\.dependencies\.(.+)$/iu.exec(section) ??
+    /^target\..+\.(?:dev-|build-)?dependencies\.(.+)$/iu.exec(section);
+  return match?.[1] ? tomlDependencyKey(match[1]) : undefined;
+}
+
+function cargoDottedDependency(
+  line: ChangedLine,
+  side: ManifestSide,
+): Dependency | undefined {
+  const match =
+    /^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9][A-Za-z0-9_-]*))\.([A-Za-z0-9_-]+)\s*=\s*(.+?)\s*$/u.exec(
+      line.content,
+    );
+  const name = match?.[1] ?? match?.[2] ?? match?.[3];
+  if (!name || !match?.[4] || !match[5]) return undefined;
+  const field = match[4].toLowerCase();
+  const quotedValue = /^(?:"([^"]+)"|'([^']+)')$/u.exec(match[5]);
+  const value = quotedValue?.[1] ?? quotedValue?.[2];
+  let version = "unversioned";
+  if (field === "version" && value) {
+    version = value;
+  } else if (field === "workspace" && /^true$/iu.test(match[5])) {
+    version = "workspace";
+  } else if (["git", "path", "registry"].includes(field) && value) {
+    version = `${field}:${value}`;
+  }
+  return dependency(name, version, sourceLine(line, side));
+}
+
 function cargoDependencies(file: FileDiff, side: ManifestSide): Dependency[] {
   const results: Dependency[] = [];
   let section = "";
@@ -326,9 +434,20 @@ function cargoDependencies(file: FileDiff, side: ManifestSide): Dependency[] {
     const heading = /^\s*\[([^\]]+)\]\s*$/u.exec(line.content);
     if (heading?.[1]) {
       section = heading[1].toLowerCase();
+      const tableName = cargoDependencyTableName(heading[1]);
+      if (tableName) {
+        results.push(
+          dependency(tableName, "unversioned", sourceLine(line, side)),
+        );
+      }
       continue;
     }
     if (!cargoSectionIsDependencies(section)) continue;
+    const dotted = cargoDottedDependency(line, side);
+    if (dotted) {
+      results.push(dotted);
+      continue;
+    }
     const match =
       /^\s*["']?([A-Za-z0-9][A-Za-z0-9._-]*)["']?\s*=\s*(?:["']([^"']+)["']|\{([^}]*)\})\s*$/u.exec(
         line.content,
@@ -351,7 +470,7 @@ function cargoDependencies(file: FileDiff, side: ManifestSide): Dependency[] {
 function gemfileDependencies(file: FileDiff, side: ManifestSide): Dependency[] {
   return linesFor(file, side).flatMap((line) => {
     const match =
-      /^\s*gem\s+["']([^"']+)["'](?:\s*,\s*["']([^"']+)["'])?/u.exec(
+      /^\s*gem(?:\s+|\s*\(\s*)["']([^"']+)["'](?:\s*,\s*["']([^"']+)["'])?/u.exec(
         line.content,
       );
     return match?.[1]

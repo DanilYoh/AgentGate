@@ -100,11 +100,13 @@ export function parseGitDiff(input: string): DiffSet {
   let newLine = 0;
   let hunk = 0;
   let inHunk = false;
+  let hasBinaryContent = false;
 
   for (const rawLine of input.replaceAll("\r\n", "\n").split("\n")) {
     if (rawLine.startsWith("diff --git ")) {
       pushFile(files, file);
       file = newFile();
+      hasBinaryContent = false;
       const paths = headerPaths(rawLine);
       if (paths) {
         const oldPath = stripPrefix(paths[0]);
@@ -116,6 +118,16 @@ export function parseGitDiff(input: string): DiffSet {
       continue;
     }
     if (!file) continue;
+    if (rawLine.includes("\0")) {
+      file.isBinary = true;
+      file.lines = [];
+      file.additions = [];
+      file.deletions = [];
+      hasBinaryContent = true;
+      inHunk = false;
+      continue;
+    }
+    if (hasBinaryContent) continue;
     if (rawLine.startsWith("new file mode ")) {
       file.isNew = true;
       delete file.oldPath;

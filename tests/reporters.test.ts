@@ -6,6 +6,10 @@ import { formatText } from "../src/reporters/text.js";
 import { metadataForRule } from "../src/rules/metadata.js";
 import { addedFile, config, riskySyntheticSecret } from "./fixtures.js";
 
+function pemBoundary(kind: "BEGIN" | "END", label: string): string {
+  return ["-----", kind, " ", label, "-----"].join("");
+}
+
 describe("reporters", () => {
   const secret = riskySyntheticSecret;
   const result = scan(
@@ -78,6 +82,20 @@ describe("reporters", () => {
     for (const formatter of [formatText, formatJson, formatSarif]) {
       const output = formatter(unsafe);
       expect(output).not.toContain(secret);
+      expect(output).toContain("REDACTED");
+    }
+  });
+
+  it("never includes private-key payloads in formatted evidence", () => {
+    const payload = "MIIEAAAAreportPayloadMustNotSurvive";
+    const unsafe = structuredClone(result);
+    const first = unsafe.findings[0];
+    if (!first) throw new Error("fixture did not produce a finding");
+    first.evidence = String.raw`pem=${pemBoundary("BEGIN", "ENCRYPTED PRIVATE KEY")}\n${payload}\n${pemBoundary("END", "ENCRYPTED PRIVATE KEY")}`;
+
+    for (const formatter of [formatText, formatJson, formatSarif]) {
+      const output = formatter(unsafe);
+      expect(output).not.toContain(payload);
       expect(output).toContain("REDACTED");
     }
   });

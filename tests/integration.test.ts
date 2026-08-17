@@ -101,6 +101,24 @@ describe("Git and CLI integration", () => {
     ]);
   });
 
+  it("forces staged text diffs despite mutable Git attributes", async () => {
+    const cwd = await repository();
+    await writeFile(join(cwd, ".gitattributes"), "app.js -diff\n", "utf8");
+    await writeFile(
+      join(cwd, "app.js"),
+      `export const token = "${riskySyntheticSecret}";\n`,
+      "utf8",
+    );
+    git(cwd, ["add", ".gitattributes", "app.js"]);
+
+    const patch = await new GitClient(cwd).getDiff({ staged: true });
+    const result = scan(parseGitDiff(patch), defaultConfig);
+
+    expect(result.findings.map((item) => item.ruleId)).toContain(
+      "secret-added",
+    );
+  });
+
   it("compares a base ref to committed changes", async () => {
     const cwd = await repository();
     await writeFile(
@@ -166,6 +184,70 @@ describe("Git and CLI integration", () => {
       expect(dependencyFinding?.message).toContain("new-runtime-package");
     },
   );
+
+  it("forces full manifest context despite mutable Git attributes", async () => {
+    const cwd = await repository();
+    const manifest = join(cwd, "package.json");
+    await writeFile(
+      manifest,
+      `${JSON.stringify(
+        {
+          dependencies: Object.fromEntries(
+            Array.from({ length: 16 }, (_, index) => [
+              `existing-${index}`,
+              "1",
+            ]),
+          ),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    git(cwd, ["add", "package.json"]);
+    git(cwd, ["commit", "--quiet", "-m", "add manifest"]);
+
+    await writeFile(
+      join(cwd, ".gitattributes"),
+      "package.json -diff\n",
+      "utf8",
+    );
+    await writeFile(
+      manifest,
+      `${JSON.stringify(
+        {
+          dependencies: {
+            ...Object.fromEntries(
+              Array.from({ length: 16 }, (_, index) => [
+                `existing-${index}`,
+                "1",
+              ]),
+            ),
+            "new-runtime-package": "latest",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    git(cwd, ["add", ".gitattributes", "package.json"]);
+
+    const stdout: string[] = [];
+    const code = await runCli(["check", "--staged", "--format", "json"], cwd, {
+      stdout: (value) => stdout.push(value),
+      stderr: () => undefined,
+    });
+    const report = JSON.parse(stdout[0] ?? "") as {
+      findings: Array<{ ruleId: string; message: string }>;
+    };
+
+    expect(code).toBe(0);
+    expect(
+      report.findings.find((finding) => finding.ruleId === "dependency-added")
+        ?.message,
+    ).toContain("new-runtime-package");
+  });
 
   it("fails closed when full manifest context exceeds the diff budget", async () => {
     const cwd = await repository();
@@ -277,6 +359,113 @@ describe("Git and CLI integration", () => {
     });
     expect(code).toBe(1);
     expect(output[0]).toContain("secret-added");
+  });
+
+  it("uses current index-tracked content before the first commit", async () => {
+    const cwd = await unbornRepository();
+    const path = join(cwd, "config.js");
+    await writeFile(
+      path,
+      `export const token = "${riskySyntheticSecret}";\n`,
+      "utf8",
+    );
+    git(cwd, ["add", "config.js"]);
+    await writeFile(path, "export const value = 1;\n", "utf8");
+    const statusBefore = git(cwd, ["status", "--porcelain=v1", "-z"]);
+
+    const client = new GitClient(cwd);
+    const defaultResult = scan(
+      parseGitDiff(await client.getDiff({})),
+      defaultConfig,
+    );
+    const stagedResult = scan(
+      parseGitDiff(await client.getDiff({ staged: true })),
+      defaultConfig,
+    );
+
+    expect(defaultResult.findings.map((item) => item.ruleId)).not.toContain(
+      "secret-added",
+    );
+    expect(stagedResult.findings.map((item) => item.ruleId)).toContain(
+      "secret-added",
+    );
+    expect(git(cwd, ["status", "--porcelain=v1", "-z"])).toBe(statusBefore);
+  });
+
+  it("finds unstaged edits to index-tracked files before the first commit", async () => {
+    const cwd = await unbornRepository();
+    const path = join(cwd, "config.js");
+    await writeFile(path, "export const value = 1;\n", "utf8");
+    git(cwd, ["add", "config.js"]);
+    await writeFile(
+      path,
+      `export const token = "${riskySyntheticSecret}";\n`,
+      "utf8",
+    );
+
+    const client = new GitClient(cwd);
+    const defaultResult = scan(
+      parseGitDiff(await client.getDiff({})),
+      defaultConfig,
+    );
+    const stagedResult = scan(
+      parseGitDiff(await client.getDiff({ staged: true })),
+      defaultConfig,
+    );
+
+    expect(defaultResult.findings.map((item) => item.ruleId)).toContain(
+      "secret-added",
+    );
+    expect(stagedResult.findings.map((item) => item.ruleId)).not.toContain(
+      "secret-added",
+    );
+  });
+
+  it("omits deleted index-tracked files from the unborn working tree", async () => {
+    const cwd = await unbornRepository();
+    const path = join(cwd, "deleted.js");
+    await writeFile(
+      path,
+      `export const token = "${riskySyntheticSecret}";\n`,
+      "utf8",
+    );
+    git(cwd, ["add", "deleted.js"]);
+    await rm(path);
+
+    const client = new GitClient(cwd);
+    const defaultDiff = parseGitDiff(await client.getDiff({}));
+    const stagedDiff = parseGitDiff(await client.getDiff({ staged: true }));
+
+    expect(defaultDiff.files.map((file) => file.path)).not.toContain(
+      "deleted.js",
+    );
+    expect(stagedDiff.files.map((file) => file.path)).toContain("deleted.js");
+  });
+
+  it("returns current full context only for requested unborn paths", async () => {
+    const cwd = await unbornRepository();
+    await writeFile(join(cwd, "other.json"), '{"state":"other"}\n', "utf8");
+    await writeFile(join(cwd, "selected.json"), '{"state":"staged"}\n', "utf8");
+    git(cwd, ["add", "other.json", "selected.json"]);
+    await writeFile(
+      join(cwd, "selected.json"),
+      '{"state":"current"}\n',
+      "utf8",
+    );
+
+    const client = new GitClient(cwd);
+    const snapshot = await client.captureSnapshot({});
+    const diff = parseGitDiff(
+      await client.getFullContextDiff(snapshot, [
+        "selected.json",
+        "missing.json",
+      ]),
+    );
+
+    expect(diff.files.map((file) => file.path)).toEqual(["selected.json"]);
+    expect(diff.files[0]?.additions.map((line) => line.content)).toContain(
+      '{"state":"current"}',
+    );
   });
 
   it("loads the default config from the repository root", async () => {

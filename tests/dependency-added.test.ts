@@ -54,6 +54,56 @@ describe("dependency-added", () => {
     );
   });
 
+  it("keeps reading project dependencies after an extra closes inside a string", () => {
+    const diff = addedFile("pyproject.toml", [
+      "[project]",
+      "dependencies = [",
+      '  "requests[socks]>=2",',
+      '  "httpx>=0.28",',
+      "]",
+    ]);
+    const findings = dependencyAddedRule.check({ diff, config: config() });
+    expect(findings).toHaveLength(2);
+    expect(findings.map((item) => [item.line, item.message])).toEqual([
+      [3, expect.stringContaining("requests[socks]")],
+      [4, expect.stringContaining("httpx")],
+    ]);
+  });
+
+  it("finds a dependency added after an existing requirement with extras", () => {
+    const before = [
+      "[project]",
+      "dependencies = [",
+      '  "requests[socks]>=2",',
+      "]",
+    ];
+    const after = [
+      ...before.slice(0, 3),
+      '  "httpx>=0.28",',
+      ...before.slice(3),
+    ];
+    const findings = dependencyAddedRule.check({
+      diff: changedManifest("pyproject.toml", before, after),
+      config: config(),
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ line: 4 });
+    expect(findings[0]?.message).toContain("httpx");
+  });
+
+  it("ignores square brackets in TOML comments while tracking an array", () => {
+    const diff = addedFile("pyproject.toml", [
+      "[project]",
+      "dependencies = [ # a closing bracket here would be data: ]",
+      '  "httpx>=0.28",',
+      "]",
+    ]);
+    const findings = dependencyAddedRule.check({ diff, config: config() });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ line: 3 });
+  });
+
   it("does not report a version update as a newly added dependency", () => {
     const diff = {
       files: [
@@ -147,9 +197,41 @@ describe("dependency-added", () => {
       "serde",
     ],
     [
+      "Cargo.toml",
+      ["[dependencies.serde]", 'version = "1"', 'features = ["derive"]'],
+      "serde",
+    ],
+    [
+      "Cargo.toml",
+      ['[dependencies."serde-json"]', 'version = "1"'],
+      "serde-json",
+    ],
+    ["Cargo.toml", ["[dependencies]", "serde.workspace = true"], "serde"],
+    ["Cargo.toml", ["[dependencies]", 'serde.version = "1"'], "serde"],
+    [
+      "Cargo.toml",
+      ["[dependencies]", 'serde.git = "https://github.com/serde-rs/serde.git"'],
+      "serde",
+    ],
+    [
       "Gemfile",
       ["source 'https://rubygems.org'", "gem 'rack', '~> 3.0'"],
       "rack",
+    ],
+    [
+      "Gemfile",
+      ["source 'https://rubygems.org'", "gem('rack', '~> 3.0')"],
+      "rack",
+    ],
+    [
+      "requirements.txt",
+      ["-e git+https://github.com/pallets/flask.git@3.0.0#egg=Flask"],
+      "Flask",
+    ],
+    [
+      "requirements.txt",
+      ["git+https://github.com/psf/requests.git@v2.32.4"],
+      "requests",
     ],
   ])("finds a declaration in %s", (path, lines, expectedName) => {
     const findings = dependencyAddedRule.check({

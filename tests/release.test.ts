@@ -219,6 +219,21 @@ describe("release workflow", () => {
   });
 });
 
+describe("dogfood policy", () => {
+  it("pins the policy to the trusted comparison ref", async () => {
+    const source = await readFile(
+      join(projectRoot, "scripts", "dogfood.mjs"),
+      "utf8",
+    );
+
+    expect(source).toContain(
+      '[cli, "check", "--base", base, "--policy-ref", base]',
+    );
+    expect(source).not.toContain('"--config"');
+    expect(source).not.toContain("createHash");
+  });
+});
+
 describe("release verifier", () => {
   it("accepts a clean tagged release and rejects mismatched or dirty state", async () => {
     const root = await createReleaseRepository();

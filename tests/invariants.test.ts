@@ -17,6 +17,10 @@ function pseudoRandom(seed: number): () => number {
   };
 }
 
+function pemBoundary(kind: "BEGIN" | "END", label: string): string {
+  return ["-----", kind, " ", label, "-----"].join("");
+}
+
 describe("parser, glob, and redaction invariants", () => {
   it("never throws or returns inconsistent totals for deterministic fuzz input", () => {
     const random = pseudoRandom(0xa63e_2026);
@@ -109,6 +113,34 @@ describe("parser, glob, and redaction invariants", () => {
     expect(redactSecrets(source)).not.toContain(secret);
     expect(safeEvidence(source)).not.toContain(secret);
     expect(safeTextFragment(source)).not.toContain(secret);
+  });
+
+  it.each([
+    [
+      "multiline PKCS#8 block",
+      `${pemBoundary("BEGIN", "PRIVATE KEY")}\nMIIEAAAArealPayloadOne\n${pemBoundary("END", "PRIVATE KEY")}`,
+      "MIIEAAAArealPayloadOne",
+    ],
+    [
+      "escaped-newline RSA block",
+      String.raw`${pemBoundary("BEGIN", "RSA PRIVATE KEY")}\nMIIEAAAArealPayloadTwo\n${pemBoundary("END", "RSA PRIVATE KEY")}`,
+      "MIIEAAAArealPayloadTwo",
+    ],
+    [
+      "same-line OpenSSH material",
+      `${pemBoundary("BEGIN", "OPENSSH PRIVATE KEY")}b3BlbnNzaC1rZXktdjEAAAAArealPayloadThree`,
+      "realPayloadThree",
+    ],
+  ])("redacts the payload from a %s", (_name, pem, payload) => {
+    const source = `prefix ${pem} suffix`;
+    for (const sanitized of [
+      redactSecrets(source),
+      safeEvidence(source),
+      safeTextFragment(source),
+    ]) {
+      expect(sanitized).not.toContain(payload);
+      expect(sanitized).toContain("[REDACTED]");
+    }
   });
 
   it("bounds evidence and escapes every C0/C1 terminal control", () => {
