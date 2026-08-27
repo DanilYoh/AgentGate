@@ -25,18 +25,33 @@ describe("CLI argument handling", () => {
     expect(output.stdout[0]).toContain("Usage: agentgate <command>");
   });
 
+  it("supports the short help flag", async () => {
+    const output = capture();
+    expect(await runCli(["-h"], process.cwd(), output.io)).toBe(0);
+    expect(output.stdout[0]).toContain("Usage:");
+  });
+
   it("returns 0 for version", async () => {
     const output = capture();
     expect(await runCli(["--version"], process.cwd(), output.io)).toBe(0);
     expect(output.stdout).toEqual(["1.0.0"]);
   });
 
+  it("supports the short version flag", async () => {
+    const output = capture();
+    expect(await runCli(["-v"], process.cwd(), output.io)).toBe(0);
+    expect(output.stdout).toEqual(["1.0.0"]);
+  });
+
   it.each([
     [[], "Expected one of these commands"],
     [["unknown"], "Expected one of these commands"],
+    [["check", "--unknown"], "Unknown option: --unknown"],
+    [["check", "--base"], "--base requires a Git ref"],
     [["check", "--staged", "--base", "HEAD"], "cannot be used together"],
     [["check", "--format", "xml"], "--format must be one of"],
     [["check", "--config"], "--config requires a path"],
+    [["check", "--policy-ref"], "--policy-ref requires a Git ref"],
     [["check", "--config-sha256", "abc"], "64-character"],
     [["check", "--config-sha256", "a".repeat(64)], "requires --config"],
     [
